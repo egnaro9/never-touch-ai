@@ -338,42 +338,14 @@ def test_known_key_formats_are_caught_by_value(label, secret):
 
 
 @pytest.mark.parametrize("label,secret", [
-    pytest.param("openai-project", "sk-proj-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: `sk-[A-Za-z0-9]{32,}` needs 32 UNBROKEN alphanumerics after "
-                     "'sk-', but OpenAI's current project keys are hyphen-segmented "
-                     "('sk-proj-...'), so the run stops after 4 chars and the key sails "
-                     "through. Substrate.shape already supports 'openai', so this is the "
-                     "format most users of this tool will actually hold. Allowing [-_] in "
-                     "that character class fixes it."))),
-    pytest.param("openrouter", "sk-or-v1-" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: same hyphen-run bug as sk-proj. OpenRouter is a standard way "
-                     "to reach many models from one browser key, i.e. exactly this tool's "
-                     "audience."))),
+    pytest.param("openai-project", "sk-proj-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2"),
+    pytest.param("openrouter", "sk-or-v1-" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6"),
     pytest.param("bearer-jwt-value", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-                                     "eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r8W1gFWFOEjXk",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: 'bearer' is only in the FIELD-name pattern, never the VALUE "
-                     "pattern. A bearer token parked under an innocent field name "
-                     "(output_preview, note, task) is stored verbatim -- and a literal "
-                     "'Bearer ' prefix is about as unambiguous as a credential gets."))),
-    pytest.param("aws-secret-access-key", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: no AWS pattern at all (neither AKIA... nor the 40-char "
-                     "secret). Substrate's own docstring names 'bedrock' as a serving "
-                     "path, so AWS credentials are in scope by the schema's own design."))),
-    pytest.param("groq", "gsk_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: no prefix rule for gsk_ (Groq) -- or xai-, hf_, or any other "
-                     "prefixed provider key. The guard only knows three vendors."))),
+                                     "eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r8W1gFWFOEjXk"),
+    pytest.param("aws-secret-access-key", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+    pytest.param("groq", "gsk_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"),
     pytest.param("long-base64-blob",
-                 "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHZlcnkgbG9uZyBiYXNlNjQgYmxvYiB0aGF0IGNvdWxkIGJlIGEga2V5PT0=",
-                 marks=pytest.mark.xfail(strict=True, reason=(
-                     "DEFECT: no generic high-entropy rule, so any base64/hex blob is "
-                     "invisible to the guard. This is the catch-all the other four cases "
-                     "need; without it the guard is a vendor allowlist, and the README's "
-                     "'any value that looks like a key' overstates it."))),
+                 "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHZlcnkgbG9uZyBiYXNlNjQgYmxvYiB0aGF0IGNvdWxkIGJlIGEga2V5PT0="),
 ])
 def test_key_formats_that_should_be_caught_but_slip_through(label, secret):
     """Realistic credentials the value regex does not recognise today.
@@ -386,10 +358,6 @@ def test_key_formats_that_should_be_caught_but_slip_through(label, secret):
     assert refusal({"steps": [{"output_preview": secret}]}) is not None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT: only VALUES are matched against the key pattern; dict KEYS are only "
-    "matched against the field-name pattern. A client that maps results by "
-    "credential ({key: usage}) stores the credential as a JSON object key."))
 def test_credential_in_key_position_is_refused():
     """A credential used as a dict key is still a credential.
 
@@ -404,11 +372,6 @@ def test_credential_in_key_position_is_refused():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT: assert_no_credentials() is wired into /runs only. /sweep/expand takes "
-    "the same nested config -- roles, system prompts, substrate base_urls -- runs no "
-    "guard, and ECHOES every config back in its response. README section 4 says the "
-    "guard walks 'every incoming payload'; today it walks one endpoint's."))
 def test_sweep_expand_is_behind_the_same_boundary(client, base_cfg):
     """The config endpoint takes credential-carrying fields too, and must refuse them.
 

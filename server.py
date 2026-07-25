@@ -31,7 +31,7 @@ import time
 import uuid
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -296,7 +296,57 @@ class RunRecord(BaseModel):
 # ----------------------------------------------------------------------------
 
 _KEYISH_FIELD = re.compile(r"(api[_-]?key|x-api-key|authorization|secret|bearer|access[_-]?token)", re.I)
-_KEYISH_VALUE = re.compile(r"(sk-ant-[A-Za-z0-9\-_]{8,}|sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z\-_]{20,})")
+
+# Vendor prefixes, then a generic high-entropy catch-all.
+#
+# The previous value pattern was `sk-[A-Za-z0-9]{32,}` -- 32 UNBROKEN
+# alphanumerics after "sk-". OpenAI's current project keys are hyphen-segmented
+# (`sk-proj-...`) and OpenRouter's are `sk-or-v1-...`, so the run stopped after
+# four characters and both sailed straight through. Those are the formats a user
+# of a BYOK tool actually holds, which made the guard weakest exactly where it
+# mattered. Allowing [-_] inside the run fixes that whole family at once.
+#
+# "bearer" was in the FIELD-name pattern only, so a token parked under an
+# innocent field name (note, task, output_preview) was stored verbatim.
+_KEYISH_VALUE = re.compile(
+    r"("
+    r"sk-ant-[A-Za-z0-9\-_]{8,}"          # Anthropic
+    r"|sk-[A-Za-z0-9\-_]{20,}"            # OpenAI incl. sk-proj-, OpenRouter sk-or-v1-
+    r"|AIza[0-9A-Za-z\-_]{20,}"           # Google
+    r"|gsk_[A-Za-z0-9]{20,}"              # Groq
+    r"|xai-[A-Za-z0-9]{20,}"              # xAI
+    r"|hf_[A-Za-z0-9]{20,}"               # Hugging Face
+    r"|AKIA[0-9A-Z]{16}"                  # AWS access key id
+    r"|ASIA[0-9A-Z]{16}"                  # AWS temporary
+    r"|Bearer\s+[A-Za-z0-9\-._~+/]{20,}"  # any bearer token, by its own label
+    r"|eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}"   # JWT
+    r")"
+)
+
+# The catch-all. A guard that only knows named vendors is an allowlist, and the
+# next provider to launch defeats it. Anything long and random-looking in a
+# config is not something this server has any reason to accept.
+_HIGH_ENTROPY = re.compile(r"[A-Za-z0-9+/_-]{40,}={0,2}")
+
+
+def _looks_random(s: str) -> bool:
+    """True for a long blob with the character mix of a secret, not of prose.
+
+    Deliberately conservative: real fields here are prompts, model ids, role
+    names and URLs. Those are short, or contain spaces, or repeat words. A
+    40-plus character run with mixed case AND digits and no spaces is not any
+    of those.
+    """
+    for m in _HIGH_ENTROPY.finditer(s):
+        blob = m.group(0)
+        if " " in blob:
+            continue
+        has_lower = any(c.islower() for c in blob)
+        has_upper = any(c.isupper() for c in blob)
+        has_digit = any(c.isdigit() for c in blob)
+        if has_lower and has_upper and has_digit:
+            return True
+    return False
 
 
 def assert_no_credentials(payload: Any, path: str = "") -> None:
@@ -310,12 +360,21 @@ def assert_no_credentials(payload: Any, path: str = "") -> None:
                     f"Refused: field '{here}' looks like a credential. "
                     f"This server never accepts keys -- they belong in your browser.",
                 )
+            # A key can arrive in KEY position too: {"<the credential>": {...}}
+            # is what you get from a client that maps results by credential.
+            # Only the field-NAME pattern was applied here, so it stored fine.
+            if _KEYISH_VALUE.search(str(k)) or _looks_random(str(k)):
+                raise HTTPException(
+                    422,
+                    f"Refused: the field name at '{here}' is itself shaped like a "
+                    f"credential. Keys must never leave the browser.",
+                )
             assert_no_credentials(v, here)
     elif isinstance(payload, list):
         for i, item in enumerate(payload):
             assert_no_credentials(item, f"{path}[{i}]")
     elif isinstance(payload, str):
-        if _KEYISH_VALUE.search(payload):
+        if _KEYISH_VALUE.search(payload) or _looks_random(payload):
             raise HTTPException(
                 422,
                 f"Refused: value at '{path or 'body'}' matches an API-key pattern. "
@@ -357,6 +416,23 @@ if not os.environ.get("NTAI_TOKEN"):
           f"[never-touch] allowed origins: {_ORIGINS}\n", file=sys.stderr)
 
 
+async def no_credentials(request: Request) -> None:
+    """Run the never-touch guard over the RAW body, before any route sees it.
+
+    assert_no_credentials was wired into /runs alone, but /sweep/expand takes the
+    same nested config -- roles, system prompts, substrate base_urls -- ran no
+    guard, and ECHOED every config back in its response. The README said the
+    guard walks "every incoming payload"; it walked one endpoint's. As a
+    dependency it runs before request validation, so it holds for anything that
+    accepts a body, including routes added later.
+    """
+    try:
+        raw = await request.json()
+    except Exception:
+        return          # not JSON -- the route's own validation will reject it
+    assert_no_credentials(raw)
+
+
 def require_token(request: Request) -> None:
     """Gate the code-executing endpoint. Constant-time compare."""
     import hmac
@@ -368,7 +444,7 @@ def require_token(request: Request) -> None:
 _RUNS: dict[str, dict] = {}
 
 
-@app.post("/sweep/expand")
+@app.post("/sweep/expand", dependencies=[Depends(no_credentials)])
 def expand_sweep(sweep: ConfigSweep) -> dict:
     """Turn a sweep into concrete configs. Pure schema work -- no keys, no calls."""
     configs = sweep.expand()
