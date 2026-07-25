@@ -1,4 +1,7 @@
-# AI Crash Test — skeleton
+# Harness Builder
+
+*The harness-comparison tool on the [AI Crash Test](https://egnaro9.github.io/never-touch-ai/)
+site. Live: [egnaro9.github.io/never-touch-ai/sweep.html](https://egnaro9.github.io/never-touch-ai/sweep.html)*
 
 A hosted BYOK tool for testing and comparing AI harness configurations: different
 models bound to different roles, with different scaffolding, run against the same
@@ -28,6 +31,9 @@ tool refused to let that be called a win for the single drafter — seventeen ti
 leave three informative tasks, which cannot reach p<0.05 even if one side sweeps
 them, so it reports *"this suite cannot decide."*
 
+The 22× cost ratio (22.12× exactly) is at Sonnet 5's intro pricing, which runs
+through 2026-08-31; after that the gap widens.
+
 - Raw result, from which every number above is computed:
   [`results/sweep_2026-07-25.json`](results/sweep_2026-07-25.json)
 - The write-up: [**field note — the first real sweep, and why it refused to call a
@@ -39,8 +45,9 @@ them, so it reports *"this suite cannot decide."*
 
 The name is a promise, so every layer is built to keep it literally true:
 
-1. **Key in memory only.** In `index.html` the key is a single JavaScript
-   variable (`API_KEY`). It is never written to `localStorage`/`sessionStorage`,
+1. **Key in memory only.** In `sweep.html` (the tool itself — `index.html` is the
+   static landing page and has no key field at all) the key is a single
+   JavaScript variable (`API_KEY`). It is never written to `localStorage`/`sessionStorage`,
    never posted to the backend, and is dropped on refresh or `beforeunload`.
 2. **The browser makes the provider calls.** `callAnthropic()` calls
    `https://api.anthropic.com/v1/messages` directly from the browser, using the
@@ -73,7 +80,7 @@ verifiable rather than asked-on-faith. Open-sourcing it is the point.
 **Backend** (Python 3.10+):
 
 ```bash
-pip install "fastapi>=0.110" "uvicorn[standard]"
+python3 -m pip install -r requirements.txt   # fastapi, uvicorn, gradecore
 NTAI_TOKEN=pick-a-secret NTAI_ORIGINS=http://localhost:5173 \
   uvicorn server:app --reload --port 8000
 ```
@@ -84,10 +91,11 @@ Install Docker and scoring runs isolated automatically (no network, read-only,
 non-root, memory/PID capped); without it you get a loud warning and a bare
 subprocess, which is **not** isolation.
 
-**Frontend:** open `index.html` directly, or serve it statically:
+**Frontend:** the tool is `sweep.html` (`index.html` is the static landing page).
+Open it directly, or serve it statically:
 
 ```bash
-python -m http.server 5173   # then visit http://localhost:5173
+python3 -m http.server 5173   # then visit http://localhost:5173/sweep.html
 ```
 
 Paste your Anthropic key into the bar at the top, pick a **task source** — a single
@@ -174,8 +182,10 @@ auditable rather than assumed. (That the serving path is an unmeasured third
 variable — alongside the model and the grader — is ANP2 Network's observation.)
 
 `axes` expands to every combination. Each config runs **N times**
-(*runs per config*) so you compare aggregates, not noisy single shots. A
-client-side **spend cap** halts the sweep before it can overrun.
+(*runs per config*) so you compare aggregates rather than noisy single shots — set
+it above 1 when a result matters. (The published sweep above used 1, which is why
+its verdict leans on the paired per-task comparison and still refuses to call a
+winner.) A client-side **spend cap** halts the sweep before it can overrun.
 
 Pricing lives in the `PRICING` map (USD per 1M tokens) — verify current numbers at
 <https://claude.com/pricing>; they change, and Sonnet 5 has intro pricing through
@@ -243,8 +253,6 @@ sanitized telemetry). The rest is where the product lives:
 - **More providers.** Add adapters for OpenAI/Google (both support CORS). A
   provider without CORS can't be called browser-direct without a proxy that would
   touch the key — so your supported list is effectively "the CORS-friendly ones."
-- **DAG topology.** `pipeline` is a linear list; generalize to a graph for
-  branching/critic loops without changing the schema's shape.
 - **Persistence + tenancy.** Swap the in-memory store for a real DB with strict
   per-user isolation so no one sees another's runs.
 - **Interactive, not batch.** Because the browser holds the key and does the work,
@@ -253,7 +261,9 @@ sanitized telemetry). The rest is where the product lives:
 
 ### Production security checklist
 
-- Tighten `allow_origins` from `*` to your exact frontend origin.
+- Set `NTAI_ORIGINS` to your exact frontend origin. It is never `*` — the default
+  is `http://localhost:5173` (`server.py:401`) — but the default is not your
+  origin either.
 - Ship a strict Content-Security-Policy (the key lives in the DOM's JS context —
   an XSS bug is now the main way it could leak).
 - Keep the key in memory only; never add a "remember my key" checkbox.

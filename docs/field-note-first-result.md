@@ -3,12 +3,14 @@
 > A write-up of the Harness Builder's first run against real models, engineer to
 > engineer. Longer and more technical than the social post: the graph execution
 > model, why the comparison is a paired sign test rather than two averages, and
-> the bugs the run itself surfaced. Every number below is recomputed from
+> the bugs the run itself surfaced. The scores, costs, latencies and win/loss
+> counts are recomputed from
 > [`results/sweep_2026-07-25.json`](../results/sweep_2026-07-25.json), which is
-> committed — commands at the end.
+> committed; the test counts come from the commands at the end.
 
-**Live:** https://egnaro9.github.io/never-touch-ai/sweep.html (runs free on mock
-substrates with no key at all)
+**Run it yourself:** https://egnaro9.github.io/never-touch-ai/sweep.html — draw a
+harness, sweep it, and it executes the whole matrix on mock substrates for free,
+with no key at all.
 **Source:** [`egnaro9/never-touch-ai`](https://github.com/egnaro9/never-touch-ai)
 · the grader engine: [`egnaro9/gradecore`](https://github.com/egnaro9/gradecore)
 
@@ -65,13 +67,16 @@ under the null each disagreement falls either way with equal probability.
 So the reading splits into three claims a leaderboard would collapse into one:
 
 1. There is **no evidence** the panel helps on this suite.
-2. It costs 22× more and takes 8× longer. Measured, not inferred.
+2. It costs 22.1× more and takes 8.4× longer. Measured, not inferred.
 3. Whether it is genuinely *worse* needs more tasks than twenty.
 
-The binding constraint is suite size. Twenty tasks move the score in 5-point
-steps, so the instrument's resolution is coarser than the effect. The fix is
-more tasks, not better statistics — which is why the tool takes your own suite
-and tells you, as you paste it, how many points each task is worth.
+The binding constraint is not step size — the 15-point gap is three times the
+5-point resolution. It is the number of tasks the two shapes actually *disagreed*
+on: three. Everything else was a tie, and ties are exactly what a paired test
+throws away. Twenty tasks is simply too few to produce enough disagreements for
+any test to work with. The fix is more tasks, not better statistics — which is
+why the tool takes your own suite and tells you, as you paste it, how many points
+each task is worth.
 
 ## The execution model
 
@@ -89,18 +94,33 @@ parent's output. A node with several receives each parent's output tagged
 answer. Cycles and dangling edges are refused by name before anything is paid
 for.
 
-The fan-in is the part a linear pipeline cannot express, and the token counts
-measure it rather than assert it. Across **all 23 panel runs**, the judge's input
-exceeded the sum of both drafters' outputs every time — median overhead 236
-tokens for the tags, task and system prompt (range 55–292). One run, to make it
-concrete: `draft_a` produced 718 tokens, `draft_b` 731, and the judge received
-1,703. The judge demonstrably read both, on every task.
+The fan-in is the part a linear pipeline cannot express. A node with several
+parents has its prompt assembled from every parent's output, each wrapped in its
+own tag — `sweep.html:1372` is the whole of it:
+
+```js
+deps.map((d) => `<<${d}>>\n${outputs[d]}`).join("\n\n")
+```
+
+The tags come from the declared graph rather than from sniffing the text, so both
+drafts reach the judge by construction. I am not quoting token overheads here:
+the committed result file records scores, cost and latency only, and a number a
+reader cannot recompute does not belong in a note whose whole point is that you
+can check it.
 
 ## The grade path has no model in it
 
-Scores come from `gradecore` predicates that execute the generated code against
-fixed checks. No model grades anything, so a score that moves means the system
-moved rather than the judge having a different day.
+Scores come from fixed predicates, not from a model. `gradecore` supplies the
+text and scalar checks and is pure by design; running a candidate is I/O, so
+execution stays in this repo behind a separate `local-exec` engine
+(`server.py:649`). No model grades anything.
+
+That makes the *grading* deterministic — the same output always scores the same.
+It does not make the pipeline deterministic: no temperature or seed is set
+anywhere, and this sweep used one run per config, so a 5-point move between two
+runs of the same shape is well within sampling noise. That is the argument for
+more tasks and more runs per config, and it is why the tool refuses to call a
+winner off a suite this small.
 
 There is an assistant in the page. It may **read** scores and explain them; it
 may never produce one. Its config proposals go through the same validation a
@@ -144,7 +164,8 @@ why only a live run surfaced it.
 
 ```bash
 git clone https://github.com/egnaro9/never-touch-ai && cd never-touch-ai
-python3 -m pytest tests -q          # 130 passed
+python3 -m pip install -r requirements.txt
+python3 -m pytest tests -q           # 130 passed, 6 xfailed
 node --test 'tests/*.test.js'        # 43 passed
 
 # the numbers in this note, recomputed from the committed result
