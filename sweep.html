@@ -340,6 +340,28 @@
           <button id="keyForget" type="button" hidden>Forget key</button>
         </div>
 
+  <!-- The claim, and the means to check it. Ported from the crash test page:
+       the strongest version of "we never see your key" is not a promise, it is
+       showing the exact bytes we DO receive and telling you not to believe the
+       panel showing them. -->
+  <details class="verify" id="verify">
+    <summary>Prove it &mdash; what does the backend actually receive?</summary>
+    <div class="vbody">
+      <p>Your key is sent only to the provider host for each substrate
+        (<code id="vhosts">api.anthropic.com</code>). Below is the entire request this page
+        posts to the backend &mdash; <b>there is no key field in it</b>.</p>
+      <p><b>Don't trust this panel.</b> Open your browser's <b>Network tab</b> &mdash; that is your
+        own record and we cannot fake it &mdash; and read the
+        <a id="vsrc" href="https://github.com/egnaro9/never-touch-ai/blob/main/server.py" target="_blank" rel="noopener">open-source backend</a>,
+        which refuses any payload that even looks key-shaped.</p>
+      <pre id="vpayload">Run a sweep &mdash; this shows the exact payload posted to the backend (no key).</pre>
+      <p class="vcors"><b>Browser-callability differs by vendor.</b> Anthropic opts in to direct
+        browser calls, so it works here. <code>api.openai.com</code> does not: it returns no
+        <code>access-control-allow-origin</code> on the response, so the browser discards it whatever
+        key you send. Point the <code>openai</code> shape at a compatible endpoint you host instead.</p>
+    </div>
+  </details>
+
         <div class="card">
           <h2>Task</h2>
           <label class="field">
@@ -391,28 +413,6 @@
             <textarea id="config" spellcheck="false"></textarea>
           </div>
         </details>
-
-  <!-- The claim, and the means to check it. Ported from the crash test page:
-       the strongest version of "we never see your key" is not a promise, it is
-       showing the exact bytes we DO receive and telling you not to believe the
-       panel showing them. -->
-  <details class="verify" id="verify">
-    <summary>Prove it &mdash; what does the backend actually receive?</summary>
-    <div class="vbody">
-      <p>Your key is sent only to the provider host for each substrate
-        (<code id="vhosts">api.anthropic.com</code>). Below is the entire request this page
-        posts to the backend &mdash; <b>there is no key field in it</b>.</p>
-      <p><b>Don't trust this panel.</b> Open your browser's <b>Network tab</b> &mdash; that is your
-        own record and we cannot fake it &mdash; and read the
-        <a id="vsrc" href="https://github.com/egnaro9/never-touch-ai/blob/main/server.py" target="_blank" rel="noopener">open-source backend</a>,
-        which refuses any payload that even looks key-shaped.</p>
-      <pre id="vpayload">Run a sweep &mdash; this shows the exact payload posted to the backend (no key).</pre>
-      <p class="vcors"><b>Browser-callability differs by vendor.</b> Anthropic opts in to direct
-        browser calls, so it works here. <code>api.openai.com</code> does not: it returns no
-        <code>access-control-allow-origin</code> on the response, so the browser discards it whatever
-        key you send. Point the <code>openai</code> shape at a compatible endpoint you host instead.</p>
-    </div>
-  </details>
 
         <details class="fold">
           <summary>Backend <span class="fsub" id="backendState">not checked</span></summary>
@@ -1536,12 +1536,34 @@ function renderPad() {
   let terms = [];
   try { terms = terminalsOf(base); } catch {}
 
-  let maxX = 0, maxY = 0;
+  // The viewBox used to be `0 0 <content width> <content height>` — anchored at
+  // the origin and sized to whatever the nodes did. That makes centring
+  // impossible by construction: move every node right and the box grows to
+  // follow, so the drawing never shifts inside the frame. It is computed from
+  // the content's CENTRE now, expanded to the pad's own aspect ratio so nothing
+  // is stretched, which means the graph sits in the middle of the box always.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of nodes) {
     const p = padPoint(n, lay);
-    maxX = Math.max(maxX, p.x + NODE_W); maxY = Math.max(maxY, p.y + NODE_H);
+    minX = Math.min(minX, p.x);            minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + NODE_W);   maxY = Math.max(maxY, p.y + NODE_H);
   }
-  pad.setAttribute("viewBox", `0 0 ${maxX + PAD_M} ${Math.max(maxY + PAD_M, 200)}`);
+  const contentW = Math.max(1, maxX - minX) + PAD_M * 2;
+  const contentH = Math.max(1, maxY - minY) + PAD_M * 2;
+  const box = pad.getBoundingClientRect();
+  const aspect = (box.width > 0 && box.height > 0) ? box.width / box.height : 1080 / 260;
+  let vw = contentW, vh = contentH;
+  if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  // HOLD THE FRAME DURING A GESTURE. Recomputing the centre on every pointermove
+  // makes the view chase the node you are dragging: the frame shifts under the
+  // cursor and the node lands short of where you dropped it (an 80px drag moved
+  // it 5). Freeze while a drag or link is live, then settle on release.
+  const gesturing = !!(padDrag || padLink);
+  const held = pad.getAttribute("viewBox");
+  pad.setAttribute("viewBox", (gesturing && held)
+    ? held
+    : `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`);
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   let svg = "";
@@ -1584,7 +1606,10 @@ function renderPad() {
 function padXY(evt) {
   const pad = $("pad"), r = pad.getBoundingClientRect();
   const vb = (pad.getAttribute("viewBox") || "0 0 100 100").split(" ").map(Number);
-  return { x: (evt.clientX - r.left) / r.width * vb[2], y: (evt.clientY - r.top) / r.height * vb[3] };
+  // vb[0]/vb[1] are no longer zero. Ignoring them offsets every drag by however
+  // far the view has been centred, which puts nodes where you did not drop them.
+  return { x: vb[0] + (evt.clientX - r.left) / r.width * vb[2],
+           y: vb[1] + (evt.clientY - r.top) / r.height * vb[3] };
 }
 
 $("pad").addEventListener("pointerdown", (e) => {
@@ -1631,7 +1656,7 @@ $("pad").addEventListener("pointermove", (e) => {
 });
 
 $("pad").addEventListener("pointerup", (e) => {
-  if (padDrag) { savePos(); padDrag = null; }
+  if (padDrag) { savePos(); padDrag = null; renderPad(); }   // re-centre once, on release
   if (padLink) {
     const drop = document.elementFromPoint(e.clientX, e.clientY);
     const target = drop && drop.closest && drop.closest("[data-node]");
@@ -1671,6 +1696,11 @@ $("addRole").addEventListener("click", () => {
 // arrangement away. This translates every node by the same offset, so the layout
 // you built is preserved exactly and only its position on the canvas changes.
 $("centerPad").addEventListener("click", () => {
+  // The view centres itself on every render, so this is the escape hatch for the
+  // other half of the problem: one node dragged a long way makes the frame zoom
+  // out to include it. This pulls the spread back to the tier layout's own
+  // scale while keeping each node on the side of the graph you put it, then
+  // returns any scrolled pane to the top-left.
   const obj = readCfg();
   if (!obj || !obj.base) { padSay("The config doesn't parse — nothing to centre.", true); return; }
   const lay = padLayout(obj.base);
@@ -1684,19 +1714,26 @@ $("centerPad").addEventListener("click", () => {
     minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
     maxX = Math.max(maxX, p.x + NODE_W); maxY = Math.max(maxY, p.y + NODE_H);
   }
-  // Materialise every position first: a node still on auto-layout has no entry
-  // in padPos, and shifting only the dragged ones would tear the graph apart.
   const w = maxX - minX, h = maxY - minY;
-  const box = $("pad").getBoundingClientRect();
-  const vh = Math.max(200, box.height || 260);
-  const dx = PAD_M - minX;
-  const dy = Math.max(PAD_M, (vh - h) / 2) - minY;
+  // Target extent: what the auto tier layout would occupy for this many nodes.
+  const tiers = lay.tiers.length || 1;
+  const widest = Math.max(...lay.tiers.map((t) => t.length), 1);
+  const tw = Math.max(NODE_W, (tiers - 1) * TIER_X + NODE_W);
+  const th = Math.max(NODE_H, (widest - 1) * ROW_Y + NODE_H);
+  const sx = w > tw ? tw / w : 1, sy = h > th ? th / h : 1;
+  const k = Math.min(sx, sy);
+
   for (const n of nodes) {
     const p = padPoint(n, lay);
-    padPos[n] = { x: p.x + dx, y: p.y + dy };
+    padPos[n] = { x: PAD_M + (p.x - minX) * k, y: PAD_M + (p.y - minY) * k };
   }
-  savePos(); renderPad();
-  padSay(`centred — ${nodes.length} node${nodes.length === 1 ? "" : "s"} moved together, nothing rewired`);
+  savePos();
+  const wrap = $("pad").parentElement;
+  if (wrap) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
+  renderPad();
+  padSay(k < 1
+    ? `re-fitted — ${nodes.length} nodes pulled back into view, nothing rewired`
+    : `centred — ${nodes.length} node${nodes.length === 1 ? "" : "s"} moved together, nothing rewired`);
 });
 
 let padPosUndo = null;
