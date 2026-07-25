@@ -125,8 +125,32 @@
   #pad text { pointer-events: none; user-select: none; }
   #pad .grab { cursor: grab; }
 
+  /* ---- collapsible sections --------------------------------------------- */
+  .fold {
+    background: var(--card); border: 1px solid var(--line); border-radius: 3px;
+    margin-top: 1rem; overflow: hidden;
+  }
+  .fold > summary {
+    cursor: pointer; list-style: none; padding: .8rem 1.05rem;
+    font-family: var(--mono); font-size: .74rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+    display: flex; align-items: baseline; gap: .5rem;
+  }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary::before {
+    content: "\25B8"; color: var(--accent); font-size: .8rem;
+    transition: transform .12s; display: inline-block;
+  }
+  .fold[open] > summary::before { transform: rotate(90deg); }
+  .fold > summary:hover { color: var(--ink); }
+  .fold .fsub { text-transform: none; letter-spacing: 0; font-weight: 400;
+                color: var(--faint); font-size: .72rem; }
+  .fold .fbody { padding: 0 1.05rem 1rem; }
+  .fold .fnote { font-size: .78rem; color: var(--muted); margin: 0 0 .5rem; }
+
   /* ---- prove-it panel --------------------------------------------------- */
-  .verify { max-width: 1080px; margin: .9rem auto 0; padding: 0 1rem; font-size: .82rem; }
+  .verify { margin-top: 1rem; font-size: .8rem; background: var(--card);
+            border: 1px solid var(--line); border-radius: 3px; padding: .8rem 1.05rem; }
   .verify summary {
     cursor: pointer; list-style: none; font-family: var(--mono); font-size: .78rem;
     color: var(--armed); border: 1px solid var(--armed); background: var(--armed-soft);
@@ -281,28 +305,6 @@
     <button id="keyForget" type="button">Forget key</button>
   </div>
 
-  <!-- The claim, and the means to check it. Ported from the crash test page:
-       the strongest version of "we never see your key" is not a promise, it is
-       showing the exact bytes we DO receive and telling you not to believe the
-       panel showing them. -->
-  <details class="verify" id="verify">
-    <summary>Prove it &mdash; what does the backend actually receive?</summary>
-    <div class="vbody">
-      <p>Your key is sent only to the provider host for each substrate
-        (<code id="vhosts">api.anthropic.com</code>). Below is the entire request this page
-        posts to the backend &mdash; <b>there is no key field in it</b>.</p>
-      <p><b>Don't trust this panel.</b> Open your browser's <b>Network tab</b> &mdash; that is your
-        own record and we cannot fake it &mdash; and read the
-        <a id="vsrc" href="https://github.com/egnaro9/never-touch-ai/blob/main/server.py" target="_blank" rel="noopener">open-source backend</a>,
-        which refuses any payload that even looks key-shaped.</p>
-      <pre id="vpayload">Run a sweep &mdash; this shows the exact payload posted to the backend (no key).</pre>
-      <p class="vcors"><b>Browser-callability differs by vendor.</b> Anthropic opts in to direct
-        browser calls, so it works here. <code>api.openai.com</code> does not: it returns no
-        <code>access-control-allow-origin</code> on the response, so the browser discards it whatever
-        key you send. Point the <code>openai</code> shape at a compatible endpoint you host instead.</p>
-    </div>
-  </details>
-
   <div class="wrap">
     <header class="mast">
       <h1>Harness <span class="never">Builder</span></h1>
@@ -335,12 +337,10 @@
           <div class="runline" id="suiteInfo" style="display:none">—</div>
         </div>
 
+        <!-- RUN. Deliberately OUTSIDE the collapsible config: the button that
+             spends money must never be hidden behind a disclosure triangle. -->
         <div class="card">
-          <h2>Config &amp; sweep</h2>
-          <label class="field">
-            <span>A base config plus axes to vary → the full matrix is generated for you</span>
-            <textarea id="config" spellcheck="false"></textarea>
-          </label>
+          <h2>Run</h2>
           <div class="row2">
             <label class="field">
               <span>Runs per config (variance)</span>
@@ -359,6 +359,52 @@
           <button class="run" id="runBtn" type="button">Run sweep</button>
           <div class="msg" id="msg"></div>
         </div>
+
+        <!-- The JSON is the source of truth, but it is not what most people want
+             to look at. Collapsed by default; the Shape canvas is the view. -->
+        <details class="fold">
+          <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
+          <div class="fbody">
+            <p class="fnote">A base config plus axes to vary → the full matrix is generated for you.</p>
+            <textarea id="config" spellcheck="false"></textarea>
+          </div>
+        </details>
+
+  <!-- The claim, and the means to check it. Ported from the crash test page:
+       the strongest version of "we never see your key" is not a promise, it is
+       showing the exact bytes we DO receive and telling you not to believe the
+       panel showing them. -->
+  <details class="verify" id="verify">
+    <summary>Prove it &mdash; what does the backend actually receive?</summary>
+    <div class="vbody">
+      <p>Your key is sent only to the provider host for each substrate
+        (<code id="vhosts">api.anthropic.com</code>). Below is the entire request this page
+        posts to the backend &mdash; <b>there is no key field in it</b>.</p>
+      <p><b>Don't trust this panel.</b> Open your browser's <b>Network tab</b> &mdash; that is your
+        own record and we cannot fake it &mdash; and read the
+        <a id="vsrc" href="https://github.com/egnaro9/never-touch-ai/blob/main/server.py" target="_blank" rel="noopener">open-source backend</a>,
+        which refuses any payload that even looks key-shaped.</p>
+      <pre id="vpayload">Run a sweep &mdash; this shows the exact payload posted to the backend (no key).</pre>
+      <p class="vcors"><b>Browser-callability differs by vendor.</b> Anthropic opts in to direct
+        browser calls, so it works here. <code>api.openai.com</code> does not: it returns no
+        <code>access-control-allow-origin</code> on the response, so the browser discards it whatever
+        key you send. Point the <code>openai</code> shape at a compatible endpoint you host instead.</p>
+    </div>
+  </details>
+
+        <details class="fold">
+          <summary>Backend <span class="fsub" id="backendState">not checked</span></summary>
+          <div class="fbody">
+            <div class="backend" id="backend">
+              <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
+                     value="http://localhost:8000" />
+              <input class="txt" id="scoreToken" type="password" placeholder="/score token"
+                     autocomplete="off" style="width:170px;display:inline-block;padding:.2rem .4rem;margin-left:.4rem" />
+              <div style="margin-top:.4rem">/score executes generated code, so it is token-gated —
+                the server prints a token on boot (or set <code>NTAI_TOKEN</code>).</div>
+            </div>
+          </div>
+        </details>
       </div>
 
       <!-- results -->
@@ -409,13 +455,6 @@
           <div id="matrix"></div>
           <div id="paired"></div>
           <div class="log" id="log"></div>
-          <div class="backend" id="backend">Backend: <span id="backendState">not checked</span>
-            · <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
-                     value="http://localhost:8000" />
-            · <input class="txt" id="scoreToken" type="password" placeholder="/score token"
-                     autocomplete="off" style="width:170px;display:inline-block;padding:.2rem .4rem" />
-            <div style="margin-top:.35rem">/score executes generated code, so it is token-gated —
-              the server prints a token on boot (or set <code>NTAI_TOKEN</code>).</div></div>
         </div>
       </div>
     </div>
