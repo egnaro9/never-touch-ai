@@ -1,0 +1,89 @@
+<style>
+  :root{
+    --paper:#0e1316; --card:#141c21; --line:rgba(255,255,255,.09);
+    --ink:#dae2e4; --muted:#8a989e; --faint:#5e6c72;
+    --amber:#f2a53c; --amber-soft:rgba(242,165,60,.16); --amber-line:rgba(242,165,60,.34);
+    --teal:#48c1ac;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper)}
+  .cover{
+    width:1200px;height:627px;background:var(--paper);color:var(--ink);
+    font-family:var(--sans);padding:44px 52px;display:flex;flex-direction:column;
+    background-image:
+      linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+    background-size:34px 34px;
+  }
+  .eye{font-family:var(--mono);font-size:14px;letter-spacing:.18em;text-transform:uppercase;
+       color:var(--amber);display:flex;align-items:center;gap:10px;font-weight:600}
+  .eye::before{content:"";width:26px;height:1px;background:var(--amber-line)}
+  h1{font-family:var(--mono);font-size:40px;font-weight:600;letter-spacing:-.02em;
+     line-height:1.1;margin-top:14px;max-width:22ch}
+  h1 em{font-style:normal;color:var(--amber)}
+
+  /* COST is the plotted measure, not score. Scores of 95/90/80 as 0-based bars
+     are visually indistinguishable — the mark hid the story. Cost spans 22x, so
+     it carries the whole point: the bar explodes while the number falls. One
+     measure, one axis; score rides as a direct label. */
+  .rows{margin-top:26px;display:flex;flex-direction:column;gap:12px}
+  .row{display:grid;grid-template-columns:250px 1fr 118px;align-items:center;gap:18px}
+  .shape{font-family:var(--mono);font-size:14.5px;color:var(--ink);white-space:nowrap}
+  .shape .calls{color:var(--faint);font-size:12.5px;display:block;margin-top:2px}
+  .track{height:38px;background:var(--card);border:1px solid var(--line);border-radius:2px;
+         position:relative;overflow:hidden}
+  .bar{position:absolute;left:0;top:0;bottom:0;background:var(--amber-soft);
+       border-right:2px solid var(--amber);border-radius:0 2px 2px 0}
+  /* Sat on the bar's end-cap at short widths. It rides just outside instead. */
+  .cost{position:absolute;top:50%;transform:translateY(-50%);
+        font-family:var(--mono);font-size:14px;color:var(--muted);white-space:nowrap}
+  .score{font-family:var(--mono);font-size:30px;font-weight:600;text-align:right;
+         font-variant-numeric:tabular-nums;color:var(--ink)}
+  .score span{display:block;font-size:11px;font-weight:400;color:var(--faint);letter-spacing:.06em}
+
+  .axisnote{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:10px;padding-left:268px}
+  .verdict{margin-top:auto;border-left:3px solid var(--teal);padding:10px 0 10px 16px}
+  .verdict p{font-family:var(--mono);font-size:15px;line-height:1.5;color:var(--teal)}
+  .verdict .who{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:8px}
+  .foot{margin-top:16px;display:flex;justify-content:space-between;align-items:baseline;
+        font-family:var(--mono);font-size:12.5px;color:var(--faint)}
+  .foot b{color:var(--muted);font-weight:400}
+</style>
+
+<div class="cover">
+  <div class="eye">Deterministic LLM evaluation</div>
+  <h1>More scaffolding scored <em>worse</em>, for 22&times; the cost.</h1>
+
+  <div class="rows">
+    <div class="row">
+      <div class="shape">one drafter<span class="calls">1 call / task</span></div>
+      <div class="track"><div class="bar" style="width:4.5%"></div><span class="cost" style="left:calc(4.5% + 12px)">$0.031</span></div>
+      <div class="score">95%<span>SCORE</span></div>
+    </div>
+    <div class="row">
+      <div class="shape">planner &rarr; drafter<span class="calls">2 calls / task</span></div>
+      <div class="track"><div class="bar" style="width:38%"></div><span class="cost" style="left:calc(38% + 12px)">$0.264</span></div>
+      <div class="score">90%<span>SCORE</span></div>
+    </div>
+    <div class="row">
+      <div class="shape">planner &rarr; 2 drafters &rarr; judge<span class="calls">4 calls / task</span></div>
+      <div class="track"><div class="bar" style="width:100%"></div><span class="cost" style="right:12px;color:var(--amber)">$0.692</span></div>
+      <div class="score">80%<span>SCORE</span></div>
+    </div>
+  </div>
+
+  <div class="axisnote">bar length = cost of one 20-task sweep</div>
+
+  <div class="verdict">
+    <p>&ldquo;this suite cannot decide between them &mdash; that is a limit of the<br>
+       suite, not a finding about the harnesses&rdquo;</p>
+    <div class="who">&mdash; the tool, refusing to let me overclaim my own result</div>
+  </div>
+
+  <div class="foot">
+    <span>20 tasks &middot; 60 runs &middot; 0 errors &middot; <b>$0.99 total</b> &middot; scored by fixed predicates, no LLM judge</span>
+    <span>egnaro9.github.io</span>
+  </div>
+</div>
