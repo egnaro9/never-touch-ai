@@ -807,6 +807,16 @@ function renderSubstrateKeys() {
       inp.value = o.value || "";
       inp.addEventListener("input", (e) => o.onInput(e.target.value.trim()));
       wrap.appendChild(inp);
+      if (o.isDefault || o.name !== "default") {
+        // One real call, one token, so "is this key good?" is answerable in the
+        // page instead of by pasting a key into a terminal. A key that fails at
+        // run time costs a whole sweep to discover.
+        const t = document.createElement("button");
+        t.type = "button"; t.className = "pdrop"; t.textContent = "test";
+        t.title = "send one tiny request and report exactly what came back";
+        t.addEventListener("click", () => testProviderKey(o.name, o.shapeRaw, o.url, t));
+        wrap.appendChild(t);
+      }
       if (o.isDefault) {
         // The control that clears keys belongs at the end of the row you type
         // into, not floating under the card.
@@ -835,12 +845,23 @@ function renderSubstrateKeys() {
   const dp = PROVIDER_PRESETS[defaultProviderId()] || PROVIDER_PRESETS.anthropic;
   row({
     name: "default", shape: "used by any role with no substrate",
+    shapeRaw: defaultProvider.shape,
     keyed: defaultProvider.shape !== "mock", isDefault: true,
     free: defaultProvider.shape === "mock",
     value: API_KEY,
     url: defaultProvider.base_url || dp.base || "",
     picker: true,
-    onInput: (v) => { API_KEY = v || null; setArmed(!!API_KEY); renderSubstrateKeys(); },
+    // Do NOT re-render here. Rebuilding the list on every keystroke replaces the
+    // input element you are typing into: focus is lost after the first
+    // character, so anything typed rather than pasted ends up truncated — and a
+    // truncated key fails as "invalid", which sends you looking at your account
+    // instead of at this. Only the armed styling needs updating.
+    onInput: (v) => {
+      API_KEY = v || null;
+      setArmed(!!API_KEY);
+      const rowEl = $("provList").firstElementChild;
+      if (rowEl) rowEl.classList.toggle("armed", !!API_KEY);
+    },
   });
 
   for (const [name, sp] of Object.entries(subs)) {
@@ -848,6 +869,7 @@ function renderSubstrateKeys() {
     row({
       name,
       shape: shape + (used.has(name) ? "" : " · not used by any role"),
+      shapeRaw: shape,
       free: shape === "mock",
       keyed: shape !== "mock" && shape !== "anthropic",
       value: SUBSTRATE_KEYS[name],
@@ -867,6 +889,40 @@ function defaultProviderId() {
     if (p.shape === defaultProvider.shape && (p.base || "") === (defaultProvider.base_url || "")) return id;
   }
   return defaultProvider.shape === "anthropic" ? "anthropic" : "local";
+}
+
+// Ask the provider directly whether it accepts this key, and say exactly what
+// came back. A 401 from a one-token request is a two-second answer; the same 401
+// discovered mid-sweep costs the whole run and reads like the tool is broken.
+async function testProviderKey(name, shape, url, btn) {
+  const msg = $("padMsg");
+  const key = name === "default" ? API_KEY : SUBSTRATE_KEYS[name];
+  if (!key) { msg.className = "msg err"; msg.textContent = `No key in the ${name} row yet.`; return; }
+  const label = btn.textContent;
+  btn.textContent = "…"; btn.disabled = true;
+  const role = { model: shape === "gemini" ? "gemini-3.6-flash"
+                       : shape === "openai" ? "gpt-5.4-mini"
+                       : "claude-haiku-4-5", max_tokens: 1, system: "" };
+  const subs = { __test: { name: "__test", shape, base_url: url || "" } };
+  const saved = SUBSTRATE_KEYS.__test;
+  SUBSTRATE_KEYS.__test = key;
+  let r;
+  try { r = await callProvider({ ...role, substrate: "__test" }, "hi", subs, []); }
+  finally {
+    if (saved === undefined) delete SUBSTRATE_KEYS.__test; else SUBSTRATE_KEYS.__test = saved;
+    btn.textContent = label; btn.disabled = false;
+  }
+  if (r.ok) {
+    msg.className = "msg ok";
+    msg.textContent = `${name}: key accepted — ${role.model} answered in ${r.latency_ms} ms.`;
+    return;
+  }
+  msg.className = "msg err";
+  // Say which side said no. A rejected key and a blocked browser look identical
+  // from the run log and have completely different fixes.
+  msg.textContent = /401|invalid|authentication/i.test(r.error || "")
+    ? `${name}: the provider REJECTED this key — ${r.error}. The request itself was well formed, so this is the key or the account, not the tool.`
+    : `${name}: ${r.error}`;
 }
 
 function dropProvider(name) {
