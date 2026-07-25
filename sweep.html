@@ -99,6 +99,7 @@
   .prow .purl { font-family: var(--mono); font-size: .66rem; color: var(--faint); margin-top: .3rem;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .prow .pfree { font-family: var(--mono); font-size: .72rem; color: var(--armed); }
+  .prow .ppick { margin-bottom: .4rem; font-size: .78rem; padding: .3rem .4rem; }
 
   /* ---- shape pad ------------------------------------------------------- */
   .shapebar { display: flex; gap: .4rem; align-items: center; margin: 0 0 .6rem; flex-wrap: wrap; }
@@ -665,6 +666,11 @@ let API_KEY = null;
 // refuses anything key-shaped outright (server.py:302).
 const SUBSTRATE_KEYS = Object.create(null);
 
+// The DEFAULT provider — the one a role with no `substrate` uses. It was
+// hardcoded to Anthropic, which is fine until your main model is Gemini or a
+// box under your desk. Same shapes any other provider can take.
+let defaultProvider = { shape: "anthropic", base_url: "" };
+
 const $ = (id) => document.getElementById(id);
 
 // The credential for a role: its substrate's own key, else the default. Mock
@@ -672,6 +678,9 @@ const $ = (id) => document.getElementById(id);
 function keyFor(role, substrates) {
   const sub = (role.substrate && substrates && substrates[role.substrate]) || null;
   if (sub && (sub.shape || "anthropic") === "mock") return "mock";
+  // No substrate means the default provider, whatever it has been set to, and
+  // the default key belongs to it.
+  if (!role.substrate) return defaultProvider.shape === "mock" ? "mock" : API_KEY;
   if (role.substrate && SUBSTRATE_KEYS[role.substrate]) return SUBSTRATE_KEYS[role.substrate];
   // Only fall back to the default key when the substrate speaks the same wire
   // shape the default key belongs to. Falling back across vendors is precisely
@@ -736,6 +745,25 @@ function renderSubstrateKeys() {
     }
     d.appendChild(head);
 
+    if (o.picker) {
+      const sel = document.createElement("select");
+      sel.className = "txt ppick";
+      for (const [id, p] of Object.entries(PROVIDER_PRESETS)) {
+        const opt = document.createElement("option");
+        opt.value = id; opt.textContent = p.label;
+        sel.appendChild(opt);
+      }
+      sel.value = defaultProviderId();
+      sel.addEventListener("change", () => {
+        const p = PROVIDER_PRESETS[sel.value];
+        defaultProvider = { shape: p.shape, base_url: p.base || "" };
+        setArmed(!!API_KEY);
+        renderSubstrateKeys();
+        updateEstimate();
+        padSay(`default provider is now ${p.label}`);
+      });
+      d.appendChild(sel);
+    }
     if (o.free) {
       const f = document.createElement("div");
       f.className = "pfree"; f.textContent = "answers locally — no key, no network, no cost";
@@ -772,9 +800,16 @@ function renderSubstrateKeys() {
     host.appendChild(d);
   };
 
+  // The default row picks its own provider, like any other. A role with no
+  // `substrate` follows whatever is chosen here.
+  const dp = PROVIDER_PRESETS[defaultProviderId()] || PROVIDER_PRESETS.anthropic;
   row({
-    name: "anthropic", shape: "anthropic · default", keyed: true, isDefault: true,
-    value: API_KEY, url: "api.anthropic.com",
+    name: "default", shape: "used by any role with no substrate",
+    keyed: defaultProvider.shape !== "mock", isDefault: true,
+    free: defaultProvider.shape === "mock",
+    value: API_KEY,
+    url: defaultProvider.base_url || dp.base || "",
+    picker: true,
     onInput: (v) => { API_KEY = v || null; setArmed(!!API_KEY); renderSubstrateKeys(); },
   });
 
@@ -796,6 +831,14 @@ function renderSubstrateKeys() {
 
 // Removing a provider is a config edit, so it follows the same refusal rules as
 // everything else: if a role still points at it, say which.
+// Which preset the current default corresponds to, so the picker shows it.
+function defaultProviderId() {
+  for (const [id, p] of Object.entries(PROVIDER_PRESETS)) {
+    if (p.shape === defaultProvider.shape && (p.base || "") === (defaultProvider.base_url || "")) return id;
+  }
+  return defaultProvider.shape === "anthropic" ? "anthropic" : "local";
+}
+
 function dropProvider(name) {
   const msg = $("padMsg");
   const obj = readCfg();
@@ -1021,7 +1064,8 @@ const PROVIDER_PRESETS = {
 async function callProvider(role, userContent, substrates, deps) {
   // WHERE this role runs. Same model id can be served from different endpoints;
   // holding the id fixed and varying this is the only way to see the difference.
-  const sub = (role.substrate && substrates && substrates[role.substrate]) || null;
+  const sub = (role.substrate && substrates && substrates[role.substrate])
+    || (role.substrate ? null : defaultProvider);
   const shape = sub ? (sub.shape || "anthropic") : "anthropic";
   if (shape === "mock") return callMock(role, userContent, deps);
 
@@ -1604,12 +1648,13 @@ async function runSweep() {
   for (const c of configs) {
     for (const n of orderOf(c)) {
       const role = c.roles[n];
-      const sub = (role.substrate && c.substrates && c.substrates[role.substrate]) || null;
+      const sub = (role.substrate && c.substrates && c.substrates[role.substrate])
+        || (role.substrate ? null : defaultProvider);
       const shape = sub ? (sub.shape || "anthropic") : "anthropic";
       if (shape === "mock") continue;
-      if (shape !== "anthropic" && !SUBSTRATE_KEYS[role.substrate]) {
+      if (role.substrate && shape !== "anthropic" && !SUBSTRATE_KEYS[role.substrate]) {
         vendorless.add(`'${role.substrate}' (${shape})`);
-      } else if (shape === "anthropic" && !keyFor(role, c.substrates)) {
+      } else if (!keyFor(role, c.substrates)) {
         needsDefault.push(n);
       }
     }
@@ -1967,6 +2012,12 @@ function renderPad() {
   // A pan is a deliberate change to the frame, so it must NOT be held; a node
   // drag must, or the frame chases the node.
   const gesturing = !!(padDrag || padLink);
+  if (padPanning) {
+    // Hold the frame SIZE while panning and move only its origin: recomputing
+    // width from the content bbox on every move is the other half of the judder.
+    const held0 = (pad.getAttribute("viewBox") || "").split(" ").map(Number);
+    if (held0.length === 4 && held0[2] > 0) { vw = held0[2]; vh = held0[3]; }
+  }
   const held = pad.getAttribute("viewBox");
   pad.setAttribute("viewBox", (gesturing && held)
     ? held
@@ -2026,10 +2077,18 @@ $("pad").addEventListener("pointerdown", (e) => {
 
   // Empty canvas — or anything at all while locked — grabs the map.
   if (padLocked || (!portEl && !nodeEl && !edgeEl)) {
-    const at = padXY(e);
-    padPanning = { x: at.x, y: at.y, px: padPanX, py: padPanY };
-    $("pad").setPointerCapture(e.pointerId);
-    $("pad").classList.add("panning");
+    // Snapshot the scale ONCE. Deriving the delta from the live viewBox meant
+    // reading a frame this pan had just moved — a feedback loop that made the
+    // graph judder and resist instead of tracking the cursor.
+    const pad = $("pad"), r = pad.getBoundingClientRect();
+    const vb = (pad.getAttribute("viewBox") || "0 0 100 100").split(" ").map(Number);
+    padPanning = {
+      sx: e.clientX, sy: e.clientY,
+      px: padPanX, py: padPanY,
+      kx: vb[2] / r.width, ky: vb[3] / r.height,   // viewBox units per screen pixel
+    };
+    pad.setPointerCapture(e.pointerId);
+    pad.classList.add("panning");
     return;
   }
 
@@ -2062,14 +2121,10 @@ $("pad").addEventListener("pointerdown", (e) => {
 
 $("pad").addEventListener("pointermove", (e) => {
   if (padPanning) {
-    // Convert the screen delta into viewBox units, so a pan tracks the cursor
-    // at every zoom level rather than drifting as you magnify.
-    const pad = $("pad"), r = pad.getBoundingClientRect();
-    const vb = (pad.getAttribute("viewBox") || "0 0 100 100").split(" ").map(Number);
-    const dx = (e.clientX - (r.left + (padPanning.x - vb[0]) / vb[2] * r.width)) / r.width * vb[2];
-    const dy = (e.clientY - (r.top + (padPanning.y - vb[1]) / vb[3] * r.height)) / r.height * vb[3];
-    padPanX = padPanning.px - dx;
-    padPanY = padPanning.py - dy;
+    // Screen delta since pointerdown, at the scale captured then. Depends on
+    // nothing this handler changes, so it cannot oscillate.
+    padPanX = padPanning.px - (e.clientX - padPanning.sx) * padPanning.kx;
+    padPanY = padPanning.py - (e.clientY - padPanning.sy) * padPanning.ky;
     renderPad();
     return;
   }
