@@ -76,25 +76,29 @@
     color: var(--muted); cursor: pointer; margin-top: .5rem;
   }
   .keycard button:hover { border-color: var(--ink); color: var(--ink); }
-  .subkeys { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .2rem; }
-  .subkey { display: inline-flex; align-items: center; gap: .3rem; }
-  .subkey .sklab { color: var(--muted); font-size: .74rem; font-family: var(--mono); }
-  .subkey input {
-    font-family: var(--mono); font-size: .78rem; padding: .3rem .45rem;
-    border: 1px solid var(--accent-line); border-radius: 2px; width: min(190px, 32vw);
-    background: var(--raised); color: var(--ink);
+  .keycard .keynote { font-size: .78rem; color: var(--muted); margin: 0 0 .7rem; }
+  .prow { border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+          padding: .5rem .6rem; margin-bottom: .5rem; }
+  .prow.armed { border-color: var(--armed); }
+  .prow .phead { display: flex; align-items: baseline; gap: .45rem; margin-bottom: .35rem; }
+  .prow .pname { font-family: var(--mono); font-size: .78rem; color: var(--ink); font-weight: 600; }
+  .prow .pshape { font-family: var(--mono); font-size: .66rem; color: var(--faint); }
+  .prow .pspacer { flex: 1 1 auto; }
+  .prow .pdrop {
+    font-family: var(--mono); font-size: .68rem; padding: .12rem .45rem; line-height: 1.5;
+    border: 1px solid var(--line); border-radius: 2px; background: transparent;
+    color: var(--faint); cursor: pointer; flex: none; align-self: center;
   }
-
-  .addprov { margin-top: .6rem; }
-  .addprov > button, .addprov #provAdd {
-    font-family: var(--mono); font-size: .74rem; padding: .3rem .7rem;
-    border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
-    color: var(--muted); cursor: pointer;
+  .prow .pdrop:hover { border-color: var(--error); color: var(--error); }
+  .prow .pin { display: flex; gap: .4rem; align-items: stretch; }
+  .prow .pin input {
+    flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: .8rem;
+    padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 2px;
+    background: var(--paper); color: var(--ink);
   }
-  .addprov > button:hover, .addprov #provAdd:hover { border-color: var(--accent); color: var(--accent); }
-  .addprov #addProvForm { margin-top: .6rem; border-left: 2px solid var(--accent-line); padding-left: .7rem; }
-  .addprov #addProvForm .field { margin-bottom: .5rem; }
-  .addprov .provnote { font-size: .72rem; color: var(--warn); margin: 0 0 .5rem; line-height: 1.45; }
+  .prow .purl { font-family: var(--mono); font-size: .66rem; color: var(--faint); margin-top: .3rem;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prow .pfree { font-family: var(--mono); font-size: .72rem; color: var(--armed); }
 
   /* ---- shape pad ------------------------------------------------------- */
   .shapebar { display: flex; gap: .4rem; align-items: center; margin: 0 0 .6rem; flex-wrap: wrap; }
@@ -205,6 +209,7 @@
   .grid > .work         { grid-column: 2; grid-row: 1 / span 2; }
   .grid > .folds        { grid-column: 1; grid-row: 2; }
   .folds > .fold:first-child { margin-top: 1rem; }
+  .work > .fold:first-child { margin-top: 0; margin-bottom: 1rem; }
   @media (max-width: 820px) {
     /* One column: the canvas is the point of the page, so it comes before the
        things you only sometimes open. Otherwise three folds push it off-screen
@@ -341,13 +346,9 @@
              anything had told them what the page was. It belongs with the other
              inputs; the armed state is what carries the promise, not the position. -->
         <div class="card keycard" id="keybar">
-          <h2>Your key <span class="state" id="keyState">No key</span></h2>
-          <label class="field">
-            <span id="keyNote">stays in this tab, in memory — never sent to the backend</span>
-            <input class="txt" id="keyInput" type="password" placeholder="sk-ant-..."
-                   autocomplete="off" spellcheck="false" />
-          </label>
-          <span class="subkeys" id="subkeys"></span>
+          <h2>Providers <span class="state" id="keyState">No key</span></h2>
+          <p class="keynote" id="keyNote">stays in this tab, in memory — never sent to the backend</p>
+          <div id="provList"></div>
 
           <!-- Per-substrate keys existed, but only appeared once a substrate was
                already in the config — which meant hand-editing JSON to reach a
@@ -377,7 +378,6 @@
             </div>
           </div>
 
-          <button id="keyForget" type="button" hidden>Forget key</button>
         </div>
 
   <!-- The claim, and the means to check it. Ported from the crash test page:
@@ -447,14 +447,6 @@
 
       <div class="folds">
         <details class="fold">
-          <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
-          <div class="fbody">
-            <p class="fnote">A base config plus axes to vary → the full matrix is generated for you.</p>
-            <textarea id="config" spellcheck="false"></textarea>
-          </div>
-        </details>
-
-        <details class="fold">
           <summary>Backend <span class="fsub" id="backendState">not checked</span></summary>
           <div class="fbody">
             <div class="backend" id="backend">
@@ -471,6 +463,14 @@
 
       <!-- results -->
       <div class="work">
+        <details class="fold">
+          <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
+          <div class="fbody">
+            <p class="fnote">A base config plus axes to vary → the full matrix is generated for you.</p>
+            <textarea id="config" spellcheck="false"></textarea>
+          </div>
+        </details>
+
         <!-- SHAPE PAD. Edits the TOPOLOGY only: which roles exist and what feeds
              what. It deliberately cannot see or touch a system prompt, a model
              id, a substrate or an axis — those stay the textarea's, so a canvas
@@ -567,25 +567,10 @@ function setArmed(on) {
   $("keyNote").textContent = on
     ? "never written to disk, never sent to the backend — gone when this tab closes"
     : "stays in this tab, in memory — never sent to the backend";
-  // A "Forget key" button with no key to forget is furniture that raises a
-  // question the page has not answered yet.
-  $("keyForget").hidden = !on && !Object.keys(SUBSTRATE_KEYS).length;
+  // Lives inside the default provider row, so it may not exist yet on first paint.
+  const f = $("keyForget");
+  if (f) f.hidden = !on && !Object.keys(SUBSTRATE_KEYS).length;
 }
-$("keyInput").addEventListener("input", (e) => {
-  API_KEY = e.target.value.trim() || null;
-  setArmed(!!API_KEY);
-});
-$("keyForget").addEventListener("click", () => {
-  API_KEY = null; $("keyInput").value = "";
-  // "Forget key" has to mean ALL of them, or the button lies. Clear the
-  // substrate keys BEFORE setArmed, which decides whether the button still has
-  // anything to do — running it first left the button showing with nothing left
-  // to forget.
-  for (const k of Object.keys(SUBSTRATE_KEYS)) delete SUBSTRATE_KEYS[k];
-  setArmed(false);
-  document.querySelectorAll(".subkey input").forEach((i) => { i.value = ""; });
-  renderSubstrateKeys();
-});
 // belt and braces: drop every key if the tab goes away
 window.addEventListener("beforeunload", () => {
   API_KEY = null;
@@ -596,12 +581,14 @@ window.addEventListener("beforeunload", () => {
 // from the config so the bar always shows exactly the credentials this sweep
 // will actually need — no more, and never fewer.
 function renderSubstrateKeys() {
-  const host = $("subkeys");
+  // ONE ROW SHAPE FOR EVERY PROVIDER, the built-in Anthropic one included. The
+  // default key was a bare password box while an added provider got a named,
+  // typed, base-URL'd row — so the field you touch first looked like the least
+  // considered part of the page. Same row now; only the remove control differs,
+  // because the default cannot be removed.
+  const host = $("provList");
   if (!host) return;
-  // Only substrates a role actually REFERENCES. A config may define one as a
-  // template without assigning it (the default does), and prompting for a
-  // credential the sweep will never use is noise that undercuts the promise
-  // that this bar shows exactly what the run needs.
+
   let subs = {}, used = new Set();
   try {
     const c = parseConfig();
@@ -610,29 +597,108 @@ function renderSubstrateKeys() {
       for (const n of orderOf(cfg))
         if (cfg.roles[n].substrate) used.add(cfg.roles[n].substrate);
   } catch { subs = {}; used = new Set(); }
-  const needed = Object.entries(subs).filter(([name, s]) =>
-    used.has(name) &&
-    (s.shape || "anthropic") !== "mock" && (s.shape || "anthropic") !== "anthropic");
+
   host.innerHTML = "";
-  if (!needed.length) return;
-  for (const [name, s] of needed) {
-    const wrap = document.createElement("span");
-    wrap.className = "subkey";
-    const lab = document.createElement("span");
-    lab.className = "sklab";
-    lab.textContent = `${name} (${s.shape}):`;
-    const inp = document.createElement("input");
-    inp.type = "password"; inp.autocomplete = "off"; inp.spellcheck = false;
-    inp.placeholder = s.shape === "openai" ? "sk-..." : "key";
-    inp.value = SUBSTRATE_KEYS[name] || "";
-    inp.addEventListener("input", (e) => {
-      const v = e.target.value.trim();
-      if (v) SUBSTRATE_KEYS[name] = v; else delete SUBSTRATE_KEYS[name];
-      setArmed(!!API_KEY);
+
+  const row = (o) => {
+    const d = document.createElement("div");
+    d.className = "prow" + (o.value ? " armed" : "");
+    const head = document.createElement("div");
+    head.className = "phead";
+    head.innerHTML = '<span class="pname"></span><span class="pshape"></span><span class="pspacer"></span>';
+    head.querySelector(".pname").textContent = o.name;
+    head.querySelector(".pshape").textContent = o.shape;
+    if (o.onDrop) {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "pdrop"; x.textContent = "remove";
+      x.title = `remove the ${o.name} provider from this config`;
+      x.addEventListener("click", o.onDrop);
+      head.appendChild(x);
+    }
+    d.appendChild(head);
+
+    if (o.free) {
+      const f = document.createElement("div");
+      f.className = "pfree"; f.textContent = "answers locally — no key, no network, no cost";
+      d.appendChild(f);
+    } else if (o.keyed) {
+      const wrap = document.createElement("div");
+      wrap.className = "pin";
+      const inp = document.createElement("input");
+      inp.type = "password"; inp.autocomplete = "off"; inp.spellcheck = false;
+      inp.placeholder = o.shape.startsWith("anthropic") ? "sk-ant-..." : "sk-...";
+      inp.value = o.value || "";
+      inp.addEventListener("input", (e) => o.onInput(e.target.value.trim()));
+      wrap.appendChild(inp);
+      if (o.isDefault) {
+        // The control that clears keys belongs at the end of the row you type
+        // into, not floating under the card.
+        const f = document.createElement("button");
+        f.type = "button"; f.id = "keyForget"; f.className = "pdrop";
+        f.textContent = "forget"; f.title = "clear every key held in this tab";
+        f.hidden = !API_KEY && !Object.keys(SUBSTRATE_KEYS).length;
+        f.addEventListener("click", forgetAllKeys);
+        wrap.appendChild(f);
+      }
+      d.appendChild(wrap);
+    }
+    if (o.url) {
+      const u = document.createElement("div"); u.className = "purl"; u.textContent = o.url;
+      d.appendChild(u);
+    }
+    if (o.note) {
+      const nEl = document.createElement("div"); nEl.className = "purl"; nEl.textContent = o.note;
+      d.appendChild(nEl);
+    }
+    host.appendChild(d);
+  };
+
+  row({
+    name: "anthropic", shape: "anthropic · default", keyed: true, isDefault: true,
+    value: API_KEY, url: "api.anthropic.com",
+    onInput: (v) => { API_KEY = v || null; setArmed(!!API_KEY); renderSubstrateKeys(); },
+  });
+
+  for (const [name, sp] of Object.entries(subs)) {
+    const shape = sp.shape || "anthropic";
+    row({
+      name,
+      shape: shape + (used.has(name) ? "" : " · not used by any role"),
+      free: shape === "mock",
+      keyed: shape !== "mock" && shape !== "anthropic",
+      value: SUBSTRATE_KEYS[name],
+      url: sp.base_url || "",
+      note: shape === "anthropic" ? "uses the default key above" : "",
+      onInput: (v) => { if (v) SUBSTRATE_KEYS[name] = v; else delete SUBSTRATE_KEYS[name]; setArmed(!!API_KEY); },
+      onDrop: () => dropProvider(name),
     });
-    wrap.append(lab, inp);
-    host.appendChild(wrap);
   }
+}
+
+// Removing a provider is a config edit, so it follows the same refusal rules as
+// everything else: if a role still points at it, say which.
+function dropProvider(name) {
+  const msg = $("padMsg");
+  const obj = readCfg();
+  if (!obj || !obj.base) { msg.className = "msg err"; msg.textContent = "The config doesn't parse — nothing was removed."; return; }
+  const holders = Object.entries(obj.base.roles || {}).filter(([, r]) => r.substrate === name).map(([k]) => k);
+  if (holders.length) {
+    msg.className = "msg err";
+    msg.textContent = `${holders.join(", ")} still run on '${name}' — point them elsewhere first.`;
+    return;
+  }
+  delete (obj.base.substrates || {})[name];
+  delete SUBSTRATE_KEYS[name];
+  $("config").value = JSON.stringify(obj, null, 2);
+  $("config").dispatchEvent(new Event("input"));
+  msg.className = "msg ok"; msg.textContent = `removed '${name}'`;
+}
+
+function forgetAllKeys() {
+  API_KEY = null;
+  for (const k of Object.keys(SUBSTRATE_KEYS)) delete SUBSTRATE_KEYS[k];
+  setArmed(false);
+  renderSubstrateKeys();
 }
 
 
