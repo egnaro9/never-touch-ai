@@ -337,10 +337,21 @@ window.addEventListener("beforeunload", () => {
 function renderSubstrateKeys() {
   const host = $("subkeys");
   if (!host) return;
-  let subs = {};
-  try { subs = (parseConfig().base.substrates) || {}; } catch { subs = {}; }
-  const needed = Object.entries(subs)
-    .filter(([, s]) => (s.shape || "anthropic") !== "mock" && (s.shape || "anthropic") !== "anthropic");
+  // Only substrates a role actually REFERENCES. A config may define one as a
+  // template without assigning it (the default does), and prompting for a
+  // credential the sweep will never use is noise that undercuts the promise
+  // that this bar shows exactly what the run needs.
+  let subs = {}, used = new Set();
+  try {
+    const c = parseConfig();
+    subs = c.base.substrates || {};
+    for (const cfg of expandSweep(c.base, c.axes))
+      for (const n of orderOf(cfg))
+        if (cfg.roles[n].substrate) used.add(cfg.roles[n].substrate);
+  } catch { subs = {}; used = new Set(); }
+  const needed = Object.entries(subs).filter(([name, s]) =>
+    used.has(name) &&
+    (s.shape || "anthropic") !== "mock" && (s.shape || "anthropic") !== "anthropic");
   host.innerHTML = "";
   if (!needed.length) return;
   for (const [name, s] of needed) {
@@ -447,12 +458,20 @@ const DEFAULT_CONFIG = {
         system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
         max_tokens: 900
       },
-      // A second drafter on ANOTHER VENDOR. Same tree, different lab — the
-      // substrate carries the wire format, so Claude and GPT can sit side by
-      // side as peers and be judged against each other.
+      // A second drafter, so the judge has two candidates that genuinely differ.
+      //
+      // This used to point at api.openai.com to show off cross-vendor. It could
+      // never work: OpenAI answers the CORS preflight but returns no
+      // access-control-allow-origin on the actual response, so a browser-direct
+      // call is discarded no matter how valid the key is. Anthropic opts in on
+      // purpose (the dangerous-direct-browser-access header); OpenAI opts out.
+      // The shipped default now runs, which matters more than what it advertises.
+      //
+      // The `openai` substrate below is still defined and still useful — point
+      // it at an OpenAI-compatible endpoint you host (vLLM, LM Studio, a proxy)
+      // and it works, because those send the header.
       draft_b: {
-        model: "gpt-5.4-mini",
-        substrate: "openai",
+        model: "claude-haiku-4-5",
         system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
         max_tokens: 900
       },
@@ -472,7 +491,16 @@ const DEFAULT_CONFIG = {
       judge:   ["draft_a", "draft_b"]
     },
     substrates: {
-      openai: { name: "openai", shape: "openai", base_url: "https://api.openai.com/v1" }
+      // The OpenAI WIRE SHAPE, pointed at an endpoint that can actually be
+      // called from a browser. api.openai.com cannot: it omits
+      // access-control-allow-origin on the response, so the browser discards it
+      // whatever key you send. Self-hosted OpenAI-compatible servers (vLLM,
+      // LM Studio, Ollama, a proxy you run) do send it, and work here today.
+      // Assign it to a role with "substrate": "openai_compatible" to use it.
+      openai_compatible: {
+        name: "openai_compatible", shape: "openai",
+        base_url: "http://localhost:11434/v1"
+      }
     }
   },
   // Named serving paths. A model id is not a system: the same id can be served
@@ -699,8 +727,28 @@ async function callProvider(role, userContent, substrates, deps) {
   try {
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   } catch (e) {
-    return { ok: false, error: "network/CORS error: " + e.message,
-             latency_ms: Math.round(performance.now() - t0), input_tokens: 0, output_tokens: 0, text: "" };
+    // A thrown fetch means the browser rejected the exchange, not that the API
+    // said no — so the status and the key are both irrelevant here. The common
+    // case has a precise cause worth naming: api.openai.com answers a preflight
+    // with CORS headers but omits access-control-allow-origin on the ACTUAL
+    // response, so the browser discards it whatever the key is. Anthropic opts
+    // in deliberately (that is what the dangerous-direct-browser-access header
+    // is for); OpenAI opts out. Saying "network/CORS error" sent two people
+    // hunting for a misconfiguration that does not exist.
+    const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+    const browserDirectRefused = /(^|\.)openai\.com$/.test(host);
+    return {
+      ok: false,
+      error: browserDirectRefused
+        ? `${host} does not allow browser-direct calls: it returns no ` +
+          `access-control-allow-origin on the response, so the browser discards it ` +
+          `regardless of your key. Use an OpenAI-compatible endpoint you host, or ` +
+          `route this substrate through a proxy.`
+        : `the browser blocked the call to ${host} (${e.message}). This is not an ` +
+          `API error — no response was accepted, so the key and status are not the cause.`,
+      latency_ms: Math.round(performance.now() - t0),
+      input_tokens: 0, output_tokens: 0, text: ""
+    };
   }
   const latency_ms = Math.round(performance.now() - t0);
   if (!res.ok) {
