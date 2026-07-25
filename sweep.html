@@ -85,6 +85,17 @@
     background: var(--raised); color: var(--ink);
   }
 
+  .addprov { margin-top: .6rem; }
+  .addprov > button, .addprov #provAdd {
+    font-family: var(--mono); font-size: .74rem; padding: .3rem .7rem;
+    border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+    color: var(--muted); cursor: pointer;
+  }
+  .addprov > button:hover, .addprov #provAdd:hover { border-color: var(--accent); color: var(--accent); }
+  .addprov #addProvForm { margin-top: .6rem; border-left: 2px solid var(--accent-line); padding-left: .7rem; }
+  .addprov #addProvForm .field { margin-bottom: .5rem; }
+  .addprov .provnote { font-size: .72rem; color: var(--warn); margin: 0 0 .5rem; line-height: 1.45; }
+
   /* ---- shape pad ------------------------------------------------------- */
   .shapebar { display: flex; gap: .4rem; align-items: center; margin: 0 0 .6rem; flex-wrap: wrap; }
   .shapebar button {
@@ -337,6 +348,35 @@
                    autocomplete="off" spellcheck="false" />
           </label>
           <span class="subkeys" id="subkeys"></span>
+
+          <!-- Per-substrate keys existed, but only appeared once a substrate was
+               already in the config — which meant hand-editing JSON to reach a
+               second vendor. A capability you cannot discover is not one. -->
+          <div class="addprov">
+            <button type="button" id="addProvToggle">+ another provider</button>
+            <div id="addProvForm" hidden>
+              <label class="field">
+                <span>Name it (used as the substrate name)</span>
+                <input class="txt" id="provName" type="text" placeholder="local_llama" spellcheck="false" />
+              </label>
+              <label class="field">
+                <span>Wire format</span>
+                <select class="txt" id="provShape">
+                  <option value="openai">OpenAI-compatible (vLLM, LM Studio, Ollama, OpenRouter…)</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="mock">Mock — answers locally, costs nothing</option>
+                </select>
+              </label>
+              <label class="field" id="provUrlField">
+                <span>Base URL</span>
+                <input class="txt" id="provUrl" type="text" value="http://localhost:11434/v1" spellcheck="false" />
+              </label>
+              <p class="provnote">api.openai.com cannot be called from a browser — it returns no
+                <code>access-control-allow-origin</code>. Point this at an endpoint you host.</p>
+              <button type="button" id="provAdd">add it</button>
+            </div>
+          </div>
+
           <button id="keyForget" type="button" hidden>Forget key</button>
         </div>
 
@@ -536,9 +576,13 @@ $("keyInput").addEventListener("input", (e) => {
   setArmed(!!API_KEY);
 });
 $("keyForget").addEventListener("click", () => {
-  API_KEY = null; $("keyInput").value = ""; setArmed(false);
-  // "Forget key" has to mean ALL of them, or the button lies.
+  API_KEY = null; $("keyInput").value = "";
+  // "Forget key" has to mean ALL of them, or the button lies. Clear the
+  // substrate keys BEFORE setArmed, which decides whether the button still has
+  // anything to do — running it first left the button showing with nothing left
+  // to forget.
   for (const k of Object.keys(SUBSTRATE_KEYS)) delete SUBSTRATE_KEYS[k];
+  setArmed(false);
   document.querySelectorAll(".subkey input").forEach((i) => { i.value = ""; });
   renderSubstrateKeys();
 });
@@ -1806,6 +1850,51 @@ function renameSelected() {
   syncPadButtons();
   renderPad();
 }
+// Adding a provider writes a SUBSTRATE into the config and nothing else: no
+// role is reassigned, so the sweep you already have keeps running exactly as it
+// did. Assigning it to a role stays an explicit act, in the config or the pad.
+$("addProvToggle").addEventListener("click", () => {
+  const f = $("addProvForm");
+  f.hidden = !f.hidden;
+  $("addProvToggle").textContent = f.hidden ? "+ another provider" : "\u2212 cancel";
+});
+$("provShape").addEventListener("change", () => {
+  const shape = $("provShape").value;
+  $("provUrlField").hidden = shape === "mock";
+  $("provUrl").value = shape === "anthropic" ? "https://api.anthropic.com" : "http://localhost:11434/v1";
+});
+$("provAdd").addEventListener("click", () => {
+  const name = $("provName").value.trim();
+  const shape = $("provShape").value;
+  const url = $("provUrl").value.trim();
+  const msg = $("padMsg");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    msg.className = "msg err";
+    msg.textContent = "A provider name must start with a letter and contain only letters, digits or _";
+    return;
+  }
+  const obj = readCfg();
+  if (!obj || !obj.base) {
+    msg.className = "msg err"; msg.textContent = "The config doesn't parse — nothing was added."; return;
+  }
+  obj.base.substrates = obj.base.substrates || {};
+  if (obj.base.substrates[name]) {
+    msg.className = "msg err"; msg.textContent = `'${name}' is already a substrate.`; return;
+  }
+  obj.base.substrates[name] = shape === "mock"
+    ? { name, shape: "mock" }
+    : { name, shape, base_url: url };
+  $("config").value = JSON.stringify(obj, null, 2);
+  $("config").dispatchEvent(new Event("input"));
+  $("addProvForm").hidden = true;
+  $("addProvToggle").textContent = "+ another provider";
+  $("provName").value = "";
+  msg.className = "msg ok";
+  msg.textContent = shape === "mock"
+    ? `added '${name}' — set a role's "substrate" to it to run that role for free`
+    : `added '${name}' — set a role's "substrate" to it, then paste its key above`;
+});
+
 $("renameRoleBtn").addEventListener("click", renameSelected);
 $("pad").addEventListener("dblclick", (e) => {
   const n = e.target.closest("[data-node]");
