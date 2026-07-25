@@ -295,6 +295,14 @@ function pairedVerdict(r, nameA, nameB) {
 
 function costVerdict(r, costA, costB, nameA, nameB) {
   const a = nameA || "A", b = nameB || "B";
+  const bothFree = costA === 0 && costB === 0;
+  if (bothFree) {
+    // A mock run spends nothing, and reporting that as "cost unknown" is wrong
+    // in the same direction the rest of this file refuses: it turns a MEASURED
+    // zero into an absence of information.
+    return { known: true, worth: null, ratio: 1,
+             text: "both ran without spending anything, so there is no cost to weigh." };
+  }
   const known = Number.isFinite(costA) && Number.isFinite(costB) && costA > 0 && costB > 0;
   if (!known) return { known: false, text: "cost unknown for one side — no trade-off can be computed." };
 

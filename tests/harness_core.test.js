@@ -328,3 +328,15 @@ test("an unpriced side refuses to compute a trade-off rather than assuming zero"
     assert.match(v.text, /cost unknown/);
   }
 });
+
+test("a free run reports no cost to weigh, not unknown cost", () => {
+  // A mock sweep spends a measured zero. Calling that "unknown" turns a
+  // measurement into an absence of one, which is the error this file exists to
+  // avoid in the other direction.
+  const v = costVerdict(pair(0, 0, 20), 0, 0, "#1", "#2");
+  assert.equal(v.known, true);
+  assert.match(v.text, /without spending anything/);
+  assert.doesNotMatch(v.text, /unknown/);
+  // but a genuinely unpriced side is still unknown
+  assert.equal(costVerdict(pair(8, 1, 11), null, 0, "#1", "#2").known, false);
+});
