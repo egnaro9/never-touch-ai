@@ -84,6 +84,14 @@
     color: var(--ink); cursor: pointer;
   }
   .keybar button:hover { border-color: var(--ink); }
+  .subkeys { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .subkey { display: inline-flex; align-items: center; gap: .3rem; }
+  .subkey .sklab { color: var(--muted); font-size: .74rem; }
+  .subkey input {
+    font-family: var(--mono); font-size: .78rem; padding: .3rem .45rem;
+    border: 1px solid var(--accent-line); border-radius: 2px; width: min(190px, 32vw);
+    background: var(--paper); color: var(--ink);
+  }
 
   /* ---- shell ----------------------------------------------------------- */
   .wrap {
@@ -180,6 +188,7 @@
     <span class="note" id="keyNote">— paste your Anthropic key to run</span>
     <span class="spacer"></span>
     <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+    <span class="subkeys" id="subkeys"></span>
     <button id="keyForget" type="button">Forget key</button>
   </div>
 
@@ -269,7 +278,33 @@
 // ---------------------------------------------------------------------------
 let API_KEY = null;
 
+// A second vendor needs a second credential. One global key was sent as the
+// Bearer token to EVERY substrate, so an Anthropic key went to OpenAI and the
+// cross-vendor panel — the shipped default — could never succeed. It failed as
+// "network/CORS error", which sends you hunting for a CORS problem that isn't
+// there instead of the auth problem that is.
+//
+// Keyed by SUBSTRATE name, because a substrate is already "where this model
+// runs", which is exactly the thing a credential belongs to. Same rules as
+// API_KEY: module-scoped, never persisted, never in the config object — the
+// config is POSTed to /sweep/expand for the cross-check, and the backend
+// refuses anything key-shaped outright (server.py:302).
+const SUBSTRATE_KEYS = Object.create(null);
+
 const $ = (id) => document.getElementById(id);
+
+// The credential for a role: its substrate's own key, else the default. Mock
+// substrates never call out, so they need nothing.
+function keyFor(role, substrates) {
+  const sub = (role.substrate && substrates && substrates[role.substrate]) || null;
+  if (sub && (sub.shape || "anthropic") === "mock") return "mock";
+  if (role.substrate && SUBSTRATE_KEYS[role.substrate]) return SUBSTRATE_KEYS[role.substrate];
+  // Only fall back to the default key when the substrate speaks the same wire
+  // shape the default key belongs to. Falling back across vendors is precisely
+  // the bug: it produces a confident request that cannot possibly authenticate.
+  if (!sub || (sub.shape || "anthropic") === "anthropic") return API_KEY;
+  return null;
+}
 
 function setArmed(on) {
   const bar = $("keybar");
@@ -285,9 +320,48 @@ $("keyInput").addEventListener("input", (e) => {
 });
 $("keyForget").addEventListener("click", () => {
   API_KEY = null; $("keyInput").value = ""; setArmed(false);
+  // "Forget key" has to mean ALL of them, or the button lies.
+  for (const k of Object.keys(SUBSTRATE_KEYS)) delete SUBSTRATE_KEYS[k];
+  document.querySelectorAll(".subkey input").forEach((i) => { i.value = ""; });
+  renderSubstrateKeys();
 });
-// belt and braces: drop the key if the tab goes away
-window.addEventListener("beforeunload", () => { API_KEY = null; });
+// belt and braces: drop every key if the tab goes away
+window.addEventListener("beforeunload", () => {
+  API_KEY = null;
+  for (const k of Object.keys(SUBSTRATE_KEYS)) delete SUBSTRATE_KEYS[k];
+});
+
+// One key input per non-mock substrate named in the current config. Rendered
+// from the config so the bar always shows exactly the credentials this sweep
+// will actually need — no more, and never fewer.
+function renderSubstrateKeys() {
+  const host = $("subkeys");
+  if (!host) return;
+  let subs = {};
+  try { subs = (parseConfig().base.substrates) || {}; } catch { subs = {}; }
+  const needed = Object.entries(subs)
+    .filter(([, s]) => (s.shape || "anthropic") !== "mock" && (s.shape || "anthropic") !== "anthropic");
+  host.innerHTML = "";
+  if (!needed.length) return;
+  for (const [name, s] of needed) {
+    const wrap = document.createElement("span");
+    wrap.className = "subkey";
+    const lab = document.createElement("span");
+    lab.className = "sklab";
+    lab.textContent = `${name} (${s.shape}):`;
+    const inp = document.createElement("input");
+    inp.type = "password"; inp.autocomplete = "off"; inp.spellcheck = false;
+    inp.placeholder = s.shape === "openai" ? "sk-..." : "key";
+    inp.value = SUBSTRATE_KEYS[name] || "";
+    inp.addEventListener("input", (e) => {
+      const v = e.target.value.trim();
+      if (v) SUBSTRATE_KEYS[name] = v; else delete SUBSTRATE_KEYS[name];
+      setArmed(!!API_KEY);
+    });
+    wrap.append(lab, inp);
+    host.appendChild(wrap);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pricing — USD per 1,000,000 tokens.
@@ -598,9 +672,17 @@ async function callProvider(role, userContent, substrates, deps) {
     ? ((sub && sub.base_url) || "https://api.openai.com/v1") + "/chat/completions"
     : ((sub && sub.base_url) || "https://api.anthropic.com") + "/v1/messages";
 
+  // The credential that belongs to THIS substrate, not whatever key happens to
+  // be in the bar. Returning null here is a refusal, not a fallback.
+  const key = keyFor(role, substrates);
+  if (!key) {
+    return { ok: false, latency_ms: 0, input_tokens: 0, output_tokens: 0, text: "",
+      error: `no key for substrate '${role.substrate}' (${shape}) — add one in the key bar` };
+  }
+
   const headers = shape === "openai"
-    ? { "content-type": "application/json", "authorization": "Bearer " + API_KEY }
-    : { "content-type": "application/json", "x-api-key": API_KEY,
+    ? { "content-type": "application/json", "authorization": "Bearer " + key }
+    : { "content-type": "application/json", "x-api-key": key,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true" };
 
@@ -922,6 +1004,8 @@ function updateEstimate() {
   }
 }
 ["config", "runs"].forEach((id) => $(id).addEventListener("input", updateEstimate));
+// The bar must show a slot for every substrate the CURRENT config names.
+$("config").addEventListener("input", renderSubstrateKeys);
 
 async function checkBackend() {
   const base = $("backendUrl").value.replace(/\/+$/, "");
@@ -945,6 +1029,12 @@ async function runSweep() {
     configs = expandSweep(cfg.base, cfg.axes);
   } catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
 
+  // Re-render the credential slots from the config we are ACTUALLY about to run.
+  // The listener fires on `input`, and assigning $("config").value in code — which
+  // this file does at boot, and any caller can do — fires nothing, so the bar could
+  // sit showing a key field for a substrate the current config no longer names.
+  renderSubstrateKeys();
+
   // A sweep whose every role sits on a mock substrate needs no key: nothing
   // leaves the tab. That is how the topology can be exercised for free.
   const subs = cfg.base.substrates || {};
@@ -953,7 +1043,37 @@ async function runSweep() {
       const sn = c.roles[n].substrate;
       return sn && subs[sn] && subs[sn].shape === "mock";
     }));
-  if (!API_KEY && !allMock) {
+  // Every role must have a credential BEFORE anything is spent. The old check
+  // asked only "is there a key?", so a cross-vendor config passed it and then
+  // sent an Anthropic key to OpenAI, one call at a time, paying for the Claude
+  // nodes on the way to a guaranteed auth failure.
+  // Two DIFFERENT missing-credential cases, and conflating them produced a
+  // message naming "substrate 'undefined'" for a plain Anthropic config.
+  //   (a) a substrate on another vendor with no key of its own
+  //   (b) no default key at all, while something still needs one
+  const vendorless = new Set(), needsDefault = [];
+  for (const c of configs) {
+    for (const n of orderOf(c)) {
+      const role = c.roles[n];
+      const sub = (role.substrate && c.substrates && c.substrates[role.substrate]) || null;
+      const shape = sub ? (sub.shape || "anthropic") : "anthropic";
+      if (shape === "mock") continue;
+      if (shape !== "anthropic" && !SUBSTRATE_KEYS[role.substrate]) {
+        vendorless.add(`'${role.substrate}' (${shape})`);
+      } else if (shape === "anthropic" && !keyFor(role, c.substrates)) {
+        needsDefault.push(n);
+      }
+    }
+  }
+  if (vendorless.size) {
+    msg.className = "msg err";
+    msg.textContent =
+      `No key for substrate ${[...vendorless].join(", ")}. Another vendor needs its own ` +
+      `credential — the default key is only ever sent to Anthropic substrates. ` +
+      `Add it in the key bar.`;
+    return;
+  }
+  if (needsDefault.length) {
     msg.className = "msg err";
     msg.textContent = "Paste your Anthropic key first — it stays in this tab.";
     return;
@@ -1130,6 +1250,7 @@ $("taskSource").addEventListener("change", async () => {
 // init
 setArmed(false);
 updateEstimate();
+renderSubstrateKeys();   // the default config already names an OpenAI substrate
 checkBackend();
 </script>
 </body>
