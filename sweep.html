@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Never Touch AI</title>
+<style>
+  /* ---- tokens ---------------------------------------------------------- */
+  :root {
+    --paper:   #f4f5f3;
+    --card:    #ffffff;
+    --ink:     #17191c;
+    --muted:   #656a71;
+    --line:    #e4e6e3;
+    --accent:  #1b4de4;   /* technical blue */
+    --armed:   #0b7a6b;   /* key-in-memory teal */
+    --warn:    #b45309;   /* budget / caution */
+    --error:   #b91c1c;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.5;
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  /* ---- key-state bar : the signature element --------------------------- */
+  .keybar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .7rem 1rem; border-bottom: 1px solid var(--line);
+    background: var(--card); font-family: var(--mono); font-size: .82rem;
+  }
+  .keybar .dot {
+    width: .62rem; height: .62rem; border-radius: 50%;
+    background: var(--muted); flex: none;
+  }
+  .keybar.armed .dot { background: var(--armed); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .keybar .state { font-weight: 600; letter-spacing: .01em; }
+  .keybar.armed .state { color: var(--armed); }
+  .keybar .note { color: var(--muted); }
+  .keybar .spacer { flex: 1 1 auto; }
+  .keybar input {
+    font-family: var(--mono); font-size: .82rem; padding: .35rem .5rem;
+    border: 1px solid var(--line); border-radius: 6px; width: min(320px, 46vw);
+    background: var(--paper); color: var(--ink);
+  }
+  .keybar button {
+    font-family: var(--mono); font-size: .8rem; padding: .38rem .7rem;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+    color: var(--ink); cursor: pointer;
+  }
+  .keybar button:hover { border-color: var(--ink); }
+
+  /* ---- shell ----------------------------------------------------------- */
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 4rem; }
+  header.mast { margin: 1rem 0 1.6rem; }
+  .mast h1 {
+    font-family: var(--mono); font-weight: 700; font-size: 1.55rem;
+    letter-spacing: -.01em; margin: 0;
+  }
+  .mast h1 .never { color: var(--armed); }
+  .mast p { color: var(--muted); margin: .4rem 0 0; max-width: 60ch; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 1.2rem; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.05rem;
+  }
+  .card + .card { margin-top: 1rem; }
+  .card h2 {
+    font-size: .74rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 0 0 .7rem; font-weight: 700;
+  }
+  label.field { display: block; margin: 0 0 .8rem; }
+  label.field span {
+    display: block; font-size: .78rem; color: var(--muted); margin: 0 0 .3rem;
+  }
+  textarea, input.txt {
+    width: 100%; font-family: var(--mono); font-size: .82rem;
+    border: 1px solid var(--line); border-radius: 7px; padding: .55rem .6rem;
+    background: var(--paper); color: var(--ink); resize: vertical;
+  }
+  textarea { min-height: 250px; line-height: 1.45; white-space: pre; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+
+  .runline { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin: .2rem 0 .8rem; }
+  .runline b { color: var(--ink); font-weight: 700; }
+
+  button.run {
+    width: 100%; font-family: var(--mono); font-weight: 700; font-size: .92rem;
+    padding: .7rem; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; letter-spacing: .01em;
+  }
+  button.run:hover { filter: brightness(1.07); }
+  button.run:disabled { background: var(--muted); cursor: not-allowed; filter: none; }
+
+  .msg { font-family: var(--mono); font-size: .78rem; margin: .7rem 0 0; }
+  .msg.err { color: var(--error); }
+  .msg.warn { color: var(--warn); }
+  .msg.ok  { color: var(--armed); }
+
+  /* ---- results --------------------------------------------------------- */
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: .8rem; }
+  th, td { text-align: left; padding: .5rem .55rem; border-bottom: 1px solid var(--line); }
+  th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.best td { background: #f0f7f4; }
+  .pill { font-size: .66rem; padding: .06rem .38rem; border-radius: 20px; border: 1px solid var(--armed); color: var(--armed); }
+  .matrix { margin-top: 1.1rem; }
+  .matrix h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 700; }
+  .matrix td.cell { text-align: center; font-size: .72rem; }
+  .matrix th.tid, .matrix td.tid { text-align: left; }
+  .mx-pass { background: #e7f4ef; color: var(--armed); }
+  .mx-part { background: #fdf3e7; color: var(--warn); }
+  .mx-fail { background: #fdecec; color: var(--error); }
+
+  .empty { color: var(--muted); font-family: var(--mono); font-size: .82rem; padding: .5rem 0; }
+
+  .log { font-family: var(--mono); font-size: .76rem; margin-top: 1rem; max-height: 320px; overflow: auto; }
+  .log .line { padding: .28rem 0; border-bottom: 1px dashed var(--line); color: var(--muted); }
+  .log .line b { color: var(--ink); }
+  .log .line.fail b { color: var(--error); }
+  .backend { font-family: var(--mono); font-size: .74rem; color: var(--muted); margin-top: .6rem; }
+</style>
+</head>
+<body>
+  <!-- SIGNATURE: the key never leaves this bar. It is the product. -->
+  <div class="keybar" id="keybar">
+    <span class="dot"></span>
+    <span class="state" id="keyState">No key</span>
+    <span class="note" id="keyNote">— paste your Anthropic key to run</span>
+    <span class="spacer"></span>
+    <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+    <button id="keyForget" type="button">Forget key</button>
+  </div>
+
+  <div class="wrap">
+    <header class="mast">
+      <h1><span class="never">Never</span> Touch AI</h1>
+      <p style="margin:.3rem 0 0"><a href="./index.html" style="font-family:var(--mono);font-size:.8rem;color:var(--accent);text-decoration:none">&larr; all three tools</a></p>
+      <p>Test and compare AI harness configurations — models, scaffolding, and roles —
+         using your own API key. The key stays in this browser tab, in memory only.
+         The backend only ever receives sanitized run traces: never the key, never the calls.</p>
+      <p style="color:var(--warn);font-family:var(--mono);font-size:.78rem;max-width:62ch;margin:.6rem 0 0">
+        Sweeps run here in your browser with no backend. <b>Scoring is local-only on purpose</b> —
+        <code>/score</code> executes model-generated code, so it is not hosted publicly. Clone the
+        repo and run the backend to get suite scores and the task × config matrix.</p>
+    </header>
+
+    <div class="grid">
+      <!-- controls -->
+      <div>
+        <div class="card">
+          <h2>Task</h2>
+          <label class="field">
+            <span>Task source</span>
+            <select class="txt" id="taskSource">
+              <option value="single">Single task (below)</option>
+              <option value="suite">Curated coding suite (from backend)</option>
+            </select>
+          </label>
+          <label class="field" id="singleTaskField">
+            <span>The prompt every config runs against</span>
+            <textarea id="task" style="min-height:80px">Write a function `fib(n: int) -> int` that returns the nth Fibonacci number iteratively, where fib(0)=0 and fib(1)=1. Return only the code.</textarea>
+          </label>
+          <div class="runline" id="suiteInfo" style="display:none">—</div>
+        </div>
+
+        <div class="card">
+          <h2>Config &amp; sweep</h2>
+          <label class="field">
+            <span>A base config plus axes to vary → the full matrix is generated for you</span>
+            <textarea id="config" spellcheck="false"></textarea>
+          </label>
+          <div class="row2">
+            <label class="field">
+              <span>Runs per config (variance)</span>
+              <input class="txt" id="runs" type="number" min="1" max="20" value="3" />
+            </label>
+            <label class="field">
+              <span>Spend cap (USD)</span>
+              <input class="txt" id="budget" type="number" min="0" step="0.05" value="0.50" />
+            </label>
+          </div>
+          <div class="runline" id="estimate">—</div>
+          <button class="run" id="runBtn" type="button">Run sweep</button>
+          <div class="msg" id="msg"></div>
+        </div>
+      </div>
+
+      <!-- results -->
+      <div>
+        <div class="card">
+          <h2>Comparison</h2>
+          <div id="results"><div class="empty">No runs yet. Paste your key, set a config, then run a sweep.</div></div>
+          <div id="matrix"></div>
+          <div class="log" id="log"></div>
+          <div class="backend" id="backend">Backend: <span id="backendState">not checked</span>
+            · <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
+                     value="http://localhost:8000" />
+            · <input class="txt" id="scoreToken" type="password" placeholder="/score token"
+                     autocomplete="off" style="width:170px;display:inline-block;padding:.2rem .4rem" />
+            <div style="margin-top:.35rem">/score executes generated code, so it is token-gated —
+              the server prints a token on boot (or set <code>NTAI_TOKEN</code>).</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// THE KEY. A module-scoped variable and nothing else. Never localStorage,
+// never sessionStorage, never sent to our backend. Gone on refresh or unload.
+// ---------------------------------------------------------------------------
+let API_KEY = null;
+
+const $ = (id) => document.getElementById(id);
+
+function setArmed(on) {
+  const bar = $("keybar");
+  bar.classList.toggle("armed", on);
+  $("keyState").textContent = on ? "Key in memory" : "No key";
+  $("keyNote").textContent = on
+    ? "· never written to disk · never sent to the backend"
+    : "— paste your Anthropic key to run";
+}
+$("keyInput").addEventListener("input", (e) => {
+  API_KEY = e.target.value.trim() || null;
+  setArmed(!!API_KEY);
+});
+$("keyForget").addEventListener("click", () => {
+  API_KEY = null; $("keyInput").value = ""; setArmed(false);
+});
+// belt and braces: drop the key if the tab goes away
+window.addEventListener("beforeunload", () => { API_KEY = null; });
+
+// ---------------------------------------------------------------------------
+// Pricing — USD per 1,000,000 tokens. Verify at https://claude.com/pricing
+// (subject to change). Sonnet 5 has $2/$10 intro pricing through 2026-08-31;
+// standard $3/$15 shown here so estimates stay correct afterward.
+// ---------------------------------------------------------------------------
+const PRICING = {
+  "claude-opus-4-8":           { in: 5,  out: 25 },
+  "claude-sonnet-5":           { in: 3,  out: 15 },
+  "claude-haiku-4-5-20251001": { in: 1,  out: 5  },
+  "claude-fable-5":            { in: 10, out: 50 },
+};
+// Returns null for an unpriced model rather than 0. Returning 0 made an unknown
+// model look free, which then won the "cheapest" pill and could top a leaderboard
+// sorted by cost — a made-up number beating a measured one.
+function costOf(model, inTok, outTok) {
+  const p = PRICING[model];
+  if (!p) return null;
+  return (inTok / 1e6) * p.in + (outTok / 1e6) * p.out;
+}
+const round6 = (x) => Math.round(x * 1e6) / 1e6;
+const usd = (x) => "$" + x.toFixed(x < 0.01 ? 5 : 4);
+const short = (v) => { const s = String(v); return s.length <= 24 ? s : s.slice(0, 21) + "..."; };
+
+// ---------------------------------------------------------------------------
+// Default config: the Ultracode-style manager→worker pipeline, plus a 2-axis
+// sweep so the first run already produces a 4-way comparison.
+// ---------------------------------------------------------------------------
+const DEFAULT_CONFIG = {
+  base: {
+    name: "manager→worker",
+    roles: {
+      manager: {
+        model: "claude-opus-4-8",
+        system: "You are a planning manager. Break the task into a short, numbered plan of concrete steps. Do not implement it.",
+        max_tokens: 400
+      },
+      worker: {
+        model: "claude-sonnet-5",
+        system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
+        max_tokens: 900
+      }
+    },
+    pipeline: ["manager", "worker"]
+  },
+  axes: [
+    { role: "manager", field: "model", values: ["claude-opus-4-8", "claude-sonnet-5"] },
+    { role: "worker",  field: "model", values: ["claude-sonnet-5", "claude-haiku-4-5-20251001"] }
+  ],
+  // How to SCORE each config's final output for this task. "python" runs the
+  // generated code against these asserts in the backend sandbox (needs backend).
+  // "contains"/"regex" are checked too. This is what makes it an evaluator.
+  checks: [
+    { kind: "python", label: "fib(10)==55",
+      test: "assert fib(10) == 55\nassert fib(0) == 0\nassert fib(1) == 1\nprint('ok')" }
+  ]
+};
+$("config").value = JSON.stringify(DEFAULT_CONFIG, null, 2);
+
+// ---------------------------------------------------------------------------
+// Sweep expansion — cartesian product of the axes.
+//
+// This exists in two places on purpose: here (authoritative, because the browser
+// runs the sweep and must work with the backend offline) and in server.py's
+// ConfigSweep.expand(). Two implementations of one algorithm normally rot apart,
+// so we don't leave it to luck — crossCheckSweep() below asks the backend to
+// expand the same sweep and shouts if the two disagree. That is the same
+// differential-oracle trick this tool exists to sell, pointed at itself.
+// ---------------------------------------------------------------------------
+function expandSweep(base, axes) {
+  if (!axes || !axes.length) return [structuredClone(base)];
+  let combos = [[]];
+  for (const ax of axes) {
+    combos = combos.flatMap((c) => ax.values.map((v) => [...c, { role: ax.role, field: ax.field, value: v }]));
+  }
+  return combos.map((combo) => {
+    const cfg = structuredClone(base);
+    const bits = [];
+    for (const { role, field, value } of combo) {
+      if (!cfg.roles[role]) throw new Error(`sweep axis references unknown role '${role}'`);
+      cfg.roles[role][field] = value;
+      bits.push(`${role}.${field}=${short(value)}`);
+    }
+    cfg.name = `${base.name} [${bits.join(", ")}]`;
+    return cfg;
+  });
+}
+
+// Ask the backend to expand the same sweep and compare. Returns null when the
+// backend is offline (that's fine — the client is authoritative), or a list of
+// disagreements when the two implementations have drifted apart.
+async function crossCheckSweep(base, axes, mine) {
+  const url = $("backendUrl").value.replace(/\/+$/, "") + "/sweep/expand";
+  let theirs;
+  try {
+    const r = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base, axes: axes || [] })
+    });
+    if (!r.ok) return null;
+    theirs = (await r.json()).configs || [];
+  } catch { return null; }
+
+  const diffs = [];
+  if (theirs.length !== mine.length)
+    diffs.push(`count: browser ${mine.length} vs backend ${theirs.length}`);
+  const n = Math.min(theirs.length, mine.length);
+  for (let i = 0; i < n; i++) {
+    if (theirs[i].name !== mine[i].name)
+      diffs.push(`#${i + 1} name: "${mine[i].name}" vs "${theirs[i].name}"`);
+    for (const role of Object.keys(mine[i].roles || {})) {
+      const a = mine[i].roles[role], b = (theirs[i].roles || {})[role];
+      if (!b) { diffs.push(`#${i + 1} role '${role}' missing on backend`); continue; }
+      if (a.model !== b.model) diffs.push(`#${i + 1} ${role}.model: ${a.model} vs ${b.model}`);
+      if ((a.max_tokens || 1024) !== (b.max_tokens || 1024))
+        diffs.push(`#${i + 1} ${role}.max_tokens: ${a.max_tokens} vs ${b.max_tokens}`);
+    }
+  }
+  return diffs;
+}
+
+// ---------------------------------------------------------------------------
+// The one place a provider is called — and it is called FROM THE BROWSER,
+// with the user's own key, direct to Anthropic. No proxy. The opt-in header
+// is what makes the browser-direct call allowed.
+// ---------------------------------------------------------------------------
+async function callAnthropic(role, userContent) {
+  const t0 = performance.now();
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: role.model,
+        max_tokens: role.max_tokens || 1024,
+        system: role.system || undefined,
+        messages: [{ role: "user", content: userContent }]
+      })
+    });
+  } catch (e) {
+    return { ok: false, error: "network/CORS error: " + e.message,
+             latency_ms: Math.round(performance.now() - t0), input_tokens: 0, output_tokens: 0, text: "" };
+  }
+  const latency_ms = Math.round(performance.now() - t0);
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const j = await res.json(); msg = (j.error && j.error.message) || msg; } catch {}
+    if (res.status === 401) msg = "key rejected (401): " + msg;
+    if (res.status === 429) msg = "rate limited (429) on your key: " + msg;
+    return { ok: false, error: msg, latency_ms, input_tokens: 0, output_tokens: 0, text: "" };
+  }
+  const data = await res.json();
+  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  return {
+    ok: true, latency_ms, text,
+    input_tokens: (data.usage && data.usage.input_tokens) || 0,
+    output_tokens: (data.usage && data.usage.output_tokens) || 0
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Run one config once: walk the pipeline, feed each role's output to the next,
+// tally latency/tokens/cost. Returns a SANITIZED record (no key anywhere).
+// ---------------------------------------------------------------------------
+async function runConfigOnce(cfg, task, budget) {
+  const steps = [];
+  let context = task, total_latency = 0, total_cost = 0, ok = true, unpriced = false;
+  for (const roleName of cfg.pipeline) {
+    if (budget.spent >= budget.cap) {
+      steps.push({ role: roleName, model: cfg.roles[roleName].model, latency_ms: 0,
+        input_tokens: 0, output_tokens: 0, cost_usd: 0, ok: false,
+        error: "spend cap reached — halted", output_preview: "" });
+      ok = false; break;
+    }
+    const role = cfg.roles[roleName];
+    const r = await callAnthropic(role, context);
+    const cost = costOf(role.model, r.input_tokens, r.output_tokens);
+    if (cost === null) unpriced = true;                 // surfaced, not silently zeroed
+    budget.spent += (cost || 0); total_latency += r.latency_ms; total_cost += (cost || 0);
+    steps.push({
+      role: roleName, model: role.model, latency_ms: r.latency_ms,
+      input_tokens: r.input_tokens, output_tokens: r.output_tokens,
+      cost_usd: round6(cost || 0), ok: r.ok, error: r.error || null,
+      output_preview: (r.text || "").slice(0, 280)   // your own content; trim to keep it light
+    });
+    if (!r.ok) { ok = false; break; }
+    context = r.text;   // this role's output becomes the next role's input
+  }
+  return { config_name: cfg.name, task, steps, final_output: context,
+           total_latency_ms: total_latency, total_cost_usd: round6(total_cost), ok, unpriced };
+}
+
+// ---------------------------------------------------------------------------
+// Best-effort POST of a sanitized record to the backend. The key is never in
+// this payload; the backend also rejects anything key-shaped at its boundary.
+// ---------------------------------------------------------------------------
+async function postRun(record) {
+  const base = $("backendUrl").value.replace(/\/+$/, "");
+  try {
+    const r = await fetch(base + "/runs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(record)
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// Score a config's output against the task's checks. Sends OUTPUT TEXT (your
+// own content, never a key) to the backend's sandboxed /score endpoint.
+// ---------------------------------------------------------------------------
+async function scoreOutput(output, checks) {
+  const base = $("backendUrl").value.replace(/\/+$/, "");
+  try {
+    const r = await fetch(base + "/score", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ntai-token": $("scoreToken").value.trim() },
+      body: JSON.stringify({ output, checks })
+    });
+    if (!r.ok) return null;
+    return (await r.json()).score;   // 0..1
+  } catch { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrate the whole sweep, updating the UI as results land.
+// ---------------------------------------------------------------------------
+const agg = new Map();        // config_name -> { n, lat, cost, ok, scoreSum, scoreN }
+const matrix = new Map();     // config_name -> Map(task_id -> { sum, n })
+let CONFIG_ORDER = [];        // config names in sweep order (stable column identity)
+let TASK_ORDER = [];          // task ids in suite order (stable row identity)
+let SUITE = null;             // fetched curated suite
+let backendUp = null;
+
+// Fetch the curated suite from the backend (cached).
+async function loadSuite(force) {
+  if (SUITE && !force) return SUITE;
+  const base = $("backendUrl").value.replace(/\/+$/, "");
+  const r = await fetch(base + "/suite");
+  if (!r.ok) throw new Error("couldn't load the suite — is the backend running?");
+  SUITE = await r.json();
+  return SUITE;
+}
+
+// The tasks to run: the curated suite, or the single textarea task.
+async function getTasks(cfg) {
+  if ($("taskSource").value === "suite") {
+    const s = await loadSuite();
+    return s.tasks.map((t) => ({ id: t.id, prompt: t.prompt, checks: t.checks || [] }));
+  }
+  return [{ id: "task", prompt: $("task").value.trim(), checks: (cfg && cfg.checks) || [] }];
+}
+
+function logLine(html, fail) {
+  const d = document.createElement("div");
+  d.className = "line" + (fail ? " fail" : "");
+  d.innerHTML = html;
+  $("log").prepend(d);
+}
+
+function renderResults() {
+  const rows = [...agg.entries()].map(([name, a]) => ({
+    name, n: a.n,
+    lat: Math.round(a.lat / a.n),
+    cost: round6(a.cost),                        // total spent on this config over the run set
+    success: Math.round((a.ok / a.n) * 100),
+    score: a.scoreN ? a.scoreSum / a.scoreN : null,
+    unpriced: !!a.unpriced,
+    num: (CONFIG_ORDER.indexOf(name) + 1) || "•"
+  }));
+  if (!rows.length) { $("results").innerHTML = '<div class="empty">No runs yet. Paste your key, pick a task source, then run.</div>'; return; }
+
+  const anyScore = rows.some((r) => r.score !== null);
+  rows.sort((x, y) =>
+    (anyScore && x.score !== y.score) ? (y.score ?? -1) - (x.score ?? -1) : x.cost - y.cost);
+  const cheapest = Math.min(...rows.map((r) => r.cost));
+  const topScore = anyScore ? Math.max(...rows.map((r) => r.score ?? -1)) : null;
+
+  let html = '<table><thead><tr><th class="num">#</th><th>Config</th>' +
+             (anyScore ? '<th class="num">suite score</th>' : '') +
+             '<th class="num">cost</th><th class="num">mean ms/call</th>' +
+             '<th class="num">no-error</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const isBest = anyScore ? (r.score === topScore) : (r.cost === cheapest);
+    const pills =
+      (anyScore && r.score === topScore ? ' <span class="pill">best</span>' : '') +
+      (r.cost === cheapest && !r.unpriced ? ' <span class="pill">cheapest</span>' : '') +
+      (r.unpriced ? ' <span class="pill" style="border-color:var(--warn);color:var(--warn)">cost unknown</span>' : '');
+    const scoreCell = anyScore
+      ? `<td class="num">${r.score === null ? "—" : Math.round(r.score * 100) + "%"}</td>` : '';
+    html += `<tr${isBest ? ' class="best"' : ''}><td class="num">${r.num}</td>` +
+            `<td>${escapeHtml(r.name)}${pills}</td>${scoreCell}` +
+            `<td class="num">${usd(r.cost)}</td><td class="num">${r.lat}</td>` +
+            `<td class="num">${r.success}%</td></tr>`;
+  }
+  $("results").innerHTML = html + "</tbody></table>";
+}
+
+function renderMatrix() {
+  const cont = $("matrix");
+  if (TASK_ORDER.length <= 1 || !matrix.size) { cont.innerHTML = ""; return; }  // only useful for a suite
+  let html = '<div class="matrix"><h3>Task × config — score per cell (columns match # in the table above)</h3>' +
+             '<table><thead><tr><th class="tid">task</th>';
+  CONFIG_ORDER.forEach((_, i) => { html += `<th class="num">#${i + 1}</th>`; });
+  html += '</tr></thead><tbody>';
+  for (const tid of TASK_ORDER) {
+    html += `<tr><td class="tid">${escapeHtml(tid)}</td>`;
+    for (const cname of CONFIG_ORDER) {
+      const cell = matrix.get(cname) && matrix.get(cname).get(tid);
+      if (!cell) { html += '<td class="cell">·</td>'; continue; }
+      const v = cell.sum / cell.n;
+      const cls = v >= 0.999 ? "mx-pass" : (v <= 0.001 ? "mx-fail" : "mx-part");
+      const txt = v >= 0.999 ? "✓" : (v <= 0.001 ? "✗" : Math.round(v * 100) + "%");
+      html += `<td class="cell ${cls}">${txt}</td>`;
+    }
+    html += '</tr>';
+  }
+  cont.innerHTML = html + '</tbody></table></div>';
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function parseConfig() {
+  const raw = $("config").value;
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { throw new Error("that config didn't parse as JSON: " + e.message); }
+  if (!obj.base || !obj.base.roles || !obj.base.pipeline)
+    throw new Error("config needs a `base` with `roles` and `pipeline`.");
+  for (const step of obj.base.pipeline)
+    if (!obj.base.roles[step]) throw new Error(`pipeline step '${step}' has no matching role.`);
+  return obj;
+}
+
+function updateEstimate() {
+  try {
+    const { base, axes } = parseConfig();
+    const configs = expandSweep(base, axes);
+    const runs = Math.max(1, parseInt($("runs").value || "1", 10));
+    const steps = base.pipeline.length;
+    const suiteMode = $("taskSource").value === "suite";
+    const nTasks = suiteMode ? (SUITE ? SUITE.tasks.length : null) : 1;
+    const calls = nTasks === null ? null : configs.length * nTasks * runs * steps;
+    $("estimate").innerHTML =
+      `<b>${configs.length}</b> configs × <b>${nTasks === null ? "?" : nTasks}</b> task${nTasks === 1 ? "" : "s"} × ` +
+      `<b>${runs}</b> run${runs === 1 ? "" : "s"} × <b>${steps}</b> steps = ` +
+      `<b>${calls === null ? "?" : calls}</b> API calls, billed to your key`;
+    $("msg").textContent = "";
+  } catch (e) {
+    $("estimate").textContent = "—";
+  }
+}
+["config", "runs"].forEach((id) => $(id).addEventListener("input", updateEstimate));
+
+async function checkBackend() {
+  const base = $("backendUrl").value.replace(/\/+$/, "");
+  try {
+    const r = await fetch(base + "/health");
+    backendUp = r.ok;
+    $("backendState").textContent = r.ok ? "connected" : "unreachable";
+  } catch { backendUp = false; $("backendState").textContent = "offline — results kept locally"; }
+}
+$("backendUrl").addEventListener("change", checkBackend);
+
+async function runSweep() {
+  const msg = $("msg");
+  if (!API_KEY) { msg.className = "msg err"; msg.textContent = "Paste your Anthropic key first — it stays in this tab."; return; }
+
+  let cfg;
+  try { cfg = parseConfig(); }
+  catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
+
+  let configs, tasks;
+  try {
+    configs = expandSweep(cfg.base, cfg.axes);
+    tasks = await getTasks(cfg);
+  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
+  if (!tasks.length) { msg.className = "msg err"; msg.textContent = "No tasks to run."; return; }
+
+  const runs = Math.max(1, parseInt($("runs").value || "1", 10));
+  // A cap of 0 must mean "spend nothing", not "no cap". `0 || Infinity` gave
+  // Infinity — the one input where a falsy-coalesce bug costs real money.
+  const rawCap = parseFloat($("budget").value);
+  const budget = { cap: Number.isFinite(rawCap) && rawCap >= 0 ? rawCap : Infinity, spent: 0 };
+  if (budget.cap === 0) { msg.className = "msg warn"; msg.textContent = "Spend cap is $0.00 — nothing will run. Raise the cap."; return; }
+
+  agg.clear(); matrix.clear();
+  CONFIG_ORDER = configs.map((c) => c.name);
+  TASK_ORDER = tasks.map((t) => t.id);
+  $("log").innerHTML = ""; renderResults(); renderMatrix();
+  await checkBackend();
+
+  // Differential check: the browser and the backend expand the same sweep.
+  // If they disagree, the matrix you are about to pay for is wrong — say so
+  // loudly rather than quietly running the browser's version.
+  if (backendUp) {
+    const diffs = await crossCheckSweep(cfg.base, cfg.axes, configs);
+    if (diffs && diffs.length) {
+      diffs.slice(0, 4).forEach((d) => logLine(`sweep mismatch — ${escapeHtml(d)}`, true));
+      msg.className = "msg err";
+      msg.textContent = `Browser and backend expanded this sweep differently (${diffs.length} difference${diffs.length > 1 ? "s" : ""}). Fix that before trusting a comparison.`;
+      $("runBtn").disabled = false; $("runBtn").textContent = "Run sweep";
+      return;
+    }
+    logLine(`sweep verified — browser and backend agree on all ${configs.length} configs`);
+  }
+
+  $("runBtn").disabled = true; $("runBtn").textContent = "Running…";
+  msg.className = "msg"; msg.textContent = "";
+  let halted = false;
+
+  outer:
+  for (const c of configs) {
+    for (const t of tasks) {
+      for (let i = 1; i <= runs; i++) {
+        if (budget.spent >= budget.cap) {
+          halted = true; logLine(`spend cap ${usd(budget.cap)} reached — stopping`, true); break outer;
+        }
+        const rec = await runConfigOnce(c, t.prompt, budget);
+
+        let score = null;
+        if (t.checks && t.checks.length && backendUp && rec.ok) {
+          score = await scoreOutput(rec.final_output, t.checks);
+        }
+        rec.score = score;
+
+        // per-config aggregate (suite pass-rate + total cost)
+        const a = agg.get(c.name) || { n: 0, lat: 0, cost: 0, ok: 0, scoreSum: 0, scoreN: 0, unpriced: false };
+        a.n++; a.lat += rec.total_latency_ms; a.cost += rec.total_cost_usd; a.ok += rec.ok ? 1 : 0;
+        if (rec.unpriced) a.unpriced = true;
+        // A run that ERRORED is a run that did not produce a passing answer, so it
+        // counts as 0 — not as "unscored". Excluding failures let a config that
+        // errored 9 times out of 10 show 100% off its one good run and take the
+        // top of the board. Reliability has to sit beside correctness or the
+        // ranking lies about which config you should actually run.
+        if (score !== null) { a.scoreSum += score; a.scoreN++; }
+        else if (t.checks && t.checks.length && backendUp) { a.scoreSum += 0; a.scoreN++; }
+        agg.set(c.name, a);
+
+        // per-(config, task) aggregate for the matrix
+        if (score !== null) {
+          const mrow = matrix.get(c.name) || new Map();
+          const cell = mrow.get(t.id) || { sum: 0, n: 0 };
+          cell.sum += score; cell.n++; mrow.set(t.id, cell); matrix.set(c.name, mrow);
+        }
+
+        // POST only the sanitized shape — no final_output text, and never a key
+        const postBody = {
+          config_name: rec.config_name, task: rec.task, steps: rec.steps,
+          total_latency_ms: rec.total_latency_ms, total_cost_usd: rec.total_cost_usd,
+          ok: rec.ok, score: rec.score
+        };
+        const stored = backendUp ? await postRun(postBody) : false;
+        const tag = rec.ok ? "ok" : "fail";
+        const err = rec.steps.find((s) => s.error);
+        logLine(
+          `<b>${escapeHtml(c.name)}</b> · ${escapeHtml(t.id)} · run ${i}/${runs} · ` +
+          `${rec.total_latency_ms} ms · ${usd(rec.total_cost_usd)} · ${tag}` +
+          (score !== null ? ` · score ${Math.round(score * 100)}%` : "") +
+          (err ? ` — ${escapeHtml(err.error)}` : "") +
+          (stored ? " · stored" : (backendUp ? "" : " · local only")),
+          !rec.ok
+        );
+        renderResults(); renderMatrix();
+      }
+    }
+  }
+
+  $("runBtn").disabled = false; $("runBtn").textContent = "Run sweep";
+  const nt = tasks.length;
+  if (halted) { msg.className = "msg warn"; msg.textContent = `Stopped at the ${usd(budget.cap)} spend cap. Spent ~${usd(budget.spent)}.`; }
+  else { msg.className = "msg ok"; msg.textContent = `Done. ${configs.length} configs × ${nt} task${nt > 1 ? "s" : ""} · spent ~${usd(budget.spent)}.`; }
+}
+$("runBtn").addEventListener("click", runSweep);
+
+// task source toggle: show/hide the single-task field, load the suite, re-estimate
+$("taskSource").addEventListener("change", async () => {
+  const suiteMode = $("taskSource").value === "suite";
+  $("singleTaskField").style.display = suiteMode ? "none" : "";
+  $("suiteInfo").style.display = suiteMode ? "" : "none";
+  if (suiteMode) {
+    $("suiteInfo").textContent = "loading suite…";
+    try {
+      const s = await loadSuite(true);
+      $("suiteInfo").innerHTML =
+        `suite <b>${escapeHtml(s.name)}</b> · <b>${s.tasks.length}</b> tasks, each with execution checks`;
+    } catch (e) { $("suiteInfo").textContent = e.message; }
+  }
+  updateEstimate();
+});
+
+// init
+setArmed(false);
+updateEstimate();
+checkBackend();
+</script>
+</body>
+</html>
