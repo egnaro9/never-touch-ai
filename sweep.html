@@ -125,6 +125,27 @@
   #pad text { pointer-events: none; user-select: none; }
   #pad .grab { cursor: grab; }
 
+  /* ---- prove-it panel --------------------------------------------------- */
+  .verify { max-width: 1080px; margin: .9rem auto 0; padding: 0 1rem; font-size: .82rem; }
+  .verify summary {
+    cursor: pointer; list-style: none; font-family: var(--mono); font-size: .78rem;
+    color: var(--armed); border: 1px solid var(--armed); background: var(--armed-soft);
+    border-radius: 2px; padding: .45rem .7rem; display: inline-block;
+  }
+  .verify summary::-webkit-details-marker { display: none; }
+  .verify summary:hover { background: var(--armed); color: var(--paper); }
+  .verify[open] summary { margin-bottom: .6rem; }
+  .verify .vbody { border-left: 2px solid var(--armed); padding-left: .8rem; }
+  .verify p { color: var(--muted); margin: .5rem 0; max-width: 78ch; }
+  .verify p b { color: var(--ink); }
+  .verify a { color: var(--accent); }
+  .verify code { font-family: var(--mono); font-size: .92em; color: var(--ink);
+                 background: var(--raised); border: 1px solid var(--line); padding: 0 .25rem; border-radius: 2px; }
+  .verify pre { background: var(--raised); border: 1px solid var(--line); border-radius: 2px;
+                padding: .6rem .7rem; overflow: auto; max-height: 220px;
+                font-family: var(--mono); font-size: .72rem; color: var(--ink); }
+  .verify .vcors { color: var(--warn); }
+
   /* ---- shell ----------------------------------------------------------- */
   .wrap {
     max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 4rem;
@@ -259,6 +280,28 @@
     <span class="subkeys" id="subkeys"></span>
     <button id="keyForget" type="button">Forget key</button>
   </div>
+
+  <!-- The claim, and the means to check it. Ported from the crash test page:
+       the strongest version of "we never see your key" is not a promise, it is
+       showing the exact bytes we DO receive and telling you not to believe the
+       panel showing them. -->
+  <details class="verify" id="verify">
+    <summary>Prove it &mdash; what does the backend actually receive?</summary>
+    <div class="vbody">
+      <p>Your key is sent only to the provider host for each substrate
+        (<code id="vhosts">api.anthropic.com</code>). Below is the entire request this page
+        posts to the backend &mdash; <b>there is no key field in it</b>.</p>
+      <p><b>Don't trust this panel.</b> Open your browser's <b>Network tab</b> &mdash; that is your
+        own record and we cannot fake it &mdash; and read the
+        <a id="vsrc" href="https://github.com/egnaro9/never-touch-ai/blob/main/server.py" target="_blank" rel="noopener">open-source backend</a>,
+        which refuses any payload that even looks key-shaped.</p>
+      <pre id="vpayload">Run a sweep &mdash; this shows the exact payload posted to the backend (no key).</pre>
+      <p class="vcors"><b>Browser-callability differs by vendor.</b> Anthropic opts in to direct
+        browser calls, so it works here. <code>api.openai.com</code> does not: it returns no
+        <code>access-control-allow-origin</code> on the response, so the browser discards it whatever
+        key you send. Point the <code>openai</code> shape at a compatible endpoint you host instead.</p>
+    </div>
+  </details>
 
   <div class="wrap">
     <header class="mast">
@@ -596,7 +639,8 @@ async function crossCheckSweep(base, axes, mine) {
   try {
     const r = await fetch(url, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ base, axes: axes || [] })
+      body: (() => { const b = JSON.stringify({ base, axes: axes || [] });
+                     recordOutgoing(url, b); return b; })()
     });
     if (!r.ok) return null;
     theirs = (await r.json()).configs || [];
@@ -811,12 +855,47 @@ async function runConfigOnce(cfg, task, budget) {
 // Best-effort POST of a sanitized record to the backend. The key is never in
 // this payload; the backend also rejects anything key-shaped at its boundary.
 // ---------------------------------------------------------------------------
+// The prove-it panel must show what was ACTUALLY sent, not a hand-written
+// example of it. An illustration of a payload is just the same promise in a
+// monospace font; the real bytes are the only version worth showing.
+function recordOutgoing(url, body) {
+  try {
+    const pretty = JSON.stringify(JSON.parse(body), null, 2);
+    const trimmed = pretty.length > 4000 ? pretty.slice(0, 4000) + "\n… (truncated for display)" : pretty;
+    $("vpayload").textContent = `POST ${url}\n\n${trimmed}`;
+    // Belt and braces on the claim itself: scan what we are about to show for
+    // anything key-shaped, and say so loudly rather than rendering it.
+    if (/sk-[A-Za-z0-9\-_]{20,}|sk-ant-|AKIA[0-9A-Z]{16}|Bearer\s+[A-Za-z0-9\-._~+/]{20,}/.test(body)) {
+      $("vpayload").textContent =
+        "STOP — the payload about to be posted contains something key-shaped.\n" +
+        "That is a bug in this page, not in your config. Nothing is being hidden from you:\n" +
+        "check the Network tab and file it.";
+    }
+  } catch { /* not JSON: nothing useful to show */ }
+}
+
+// Which hosts a key can reach, from the config actually loaded.
+function refreshVerifyHosts() {
+  const hosts = new Set(["api.anthropic.com"]);
+  try {
+    const subs = (parseConfig().base.substrates) || {};
+    for (const sp of Object.values(subs)) {
+      const shape = sp.shape || "anthropic";
+      if (shape === "mock") continue;
+      if (sp.base_url) { try { hosts.add(new URL(sp.base_url).host); } catch {} }
+      else if (shape === "openai") hosts.add("api.openai.com");
+    }
+  } catch {}
+  const el = $("vhosts");
+  if (el) el.textContent = [...hosts].join(", ");
+}
+
 async function postRun(record) {
   const base = $("backendUrl").value.replace(/\/+$/, "");
   try {
     const r = await fetch(base + "/runs", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(record)
+      body: (() => { const b = JSON.stringify(record); recordOutgoing(base + "/runs", b); return b; })()
     });
     return r.ok;
   } catch { return false; }
@@ -1032,6 +1111,7 @@ function updateEstimate() {
 ["config", "runs"].forEach((id) => $(id).addEventListener("input", updateEstimate));
 // The bar must show a slot for every substrate the CURRENT config names.
 $("config").addEventListener("input", renderSubstrateKeys);
+$("config").addEventListener("input", refreshVerifyHosts);
 
 async function checkBackend() {
   const base = $("backendUrl").value.replace(/\/+$/, "");
@@ -1782,6 +1862,7 @@ $("asstInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("as
 
 updateEstimate();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
+refreshVerifyHosts();
 renderPad();
 syncPadButtons();
 checkBackend();
