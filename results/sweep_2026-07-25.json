@@ -1,0 +1,148 @@
+{
+  "what": "One sweep of the built-in coding suite across three harness shapes, against real models.",
+  "date": "2026-07-25",
+  "suite": {
+    "id": "coding-starter-v2",
+    "tasks": 20,
+    "runs_per_config": 1
+  },
+  "models": {
+    "planner": "claude-opus-4-8",
+    "draft_a": "claude-sonnet-5",
+    "draft_b": "claude-haiku-4-5",
+    "judge": "claude-opus-4-8"
+  },
+  "total_spent_usd": 0.988,
+  "note": "Scores come from gradecore predicates executing the generated code. No model graded anything. Prompts and answers are deliberately excluded.",
+  "configs": [
+    {
+      "name": "harness [draft_a]",
+      "calls_per_task": 1,
+      "n_tasks": 20,
+      "mean_score": 0.95,
+      "total_cost_usd": 0.03129,
+      "mean_latency_ms": 2179,
+      "error_rate": 0.0
+    },
+    {
+      "name": "harness [planner\u2192draft_a]",
+      "calls_per_task": 2,
+      "n_tasks": 20,
+      "mean_score": 0.9,
+      "total_cost_usd": 0.26443,
+      "mean_latency_ms": 9140,
+      "error_rate": 0.0
+    },
+    {
+      "name": "harness [planner\u2192[draft_a|draft_b]\u2192judge]",
+      "calls_per_task": 4,
+      "n_tasks": 20,
+      "mean_score": 0.8,
+      "total_cost_usd": 0.69229,
+      "mean_latency_ms": 18301,
+      "error_rate": 0.0
+    }
+  ],
+  "per_task": {
+    "Write a decorator `retry(times)` that retries the wrapped function up ": {
+      "1_call": 1.0,
+      "2_call": 0.0,
+      "4_call": 1.0
+    },
+    "Write `lcp(strs: list[str]) -> str` returning the longest common prefi": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "The function below shadows the built-in `sum` and crashes on the secon": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `parse_ini(text: str) -> dict` parsing a tiny INI format into `{": {
+      "1_call": 0.0,
+      "2_call": 0.0,
+      "4_call": 0.0
+    },
+    "Implement a class `LRUCache` with `__init__(capacity)`, `get(key)` ret": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `chunk(lst: list, size: int) -> list[list]` splitting a list int": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "The function below should return the last `n` items of a list, but it ": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `two_sum(nums: list[int], target: int) -> list[int]` returning t": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 0.0
+    },
+    "Refactor the function below to be clean and readable while preserving ": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `bsearch(arr: list[int], target: int) -> int` returning the inde": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `group_anagrams(words: list[str]) -> list[list[str]]` that group": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "The function below has the classic mutable-default-argument bug: resul": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `to_roman(n: int) -> str` converting an integer 1..3999 into its": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `flatten(lst) -> list` that flattens an arbitrarily nested list ": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Implement a class `MinStack` with methods push(x), pop() (removes and ": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 0.0
+    },
+    "Write `word_freq(text: str) -> dict` that returns a case-insensitive w": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `merge(intervals: list[list[int]]) -> list[list[int]]` that merg": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write `is_balanced(s: str) -> bool` returning True iff the bracket cha": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "The function below should return a list of the first `n` even numbers ": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 1.0
+    },
+    "Write a function `rle_encode(s: str) -> str` that run-length-encodes a": {
+      "1_call": 1.0,
+      "2_call": 1.0,
+      "4_call": 0.0
+    }
+  }
+}
