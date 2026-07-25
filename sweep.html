@@ -56,41 +56,33 @@
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
-  /* ---- key-state bar : the signature element --------------------------- */
-  .keybar {
-    position: sticky; top: 0; z-index: 10;
-    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
-    padding: .7rem 1rem; border-bottom: 1px solid var(--line);
-    background: var(--card); font-family: var(--mono); font-size: .82rem;
+  /* ---- key card --------------------------------------------------------- */
+  .keycard h2 { display: flex; align-items: baseline; gap: .5rem; }
+  .keycard .state {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .06em;
+    color: var(--faint); text-transform: none; font-weight: 400;
   }
-  .keybar .dot {
-    width: .62rem; height: .62rem; border-radius: 50%;
-    background: var(--muted); flex: none;
+  .keycard.armed .state { color: var(--armed); }
+  .keycard.armed .state::before {
+    content: ""; display: inline-block; width: .5rem; height: .5rem; border-radius: 50%;
+    background: var(--armed); margin-right: .35rem;
+    animation: pulse 2s ease-in-out infinite;
   }
-  .keybar.armed .dot { background: var(--armed); animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-  .keybar .state { font-weight: 600; letter-spacing: .01em; }
-  .keybar.armed .state { color: var(--armed); }
-  .keybar .note { color: var(--muted); }
-  .keybar .spacer { flex: 1 1 auto; }
-  .keybar input {
-    font-family: var(--mono); font-size: .82rem; padding: .35rem .5rem;
-    border: 1px solid var(--line); border-radius: 2px; width: min(320px, 46vw);
-    background: var(--paper); color: var(--ink);
-  }
-  .keybar button {
-    font-family: var(--mono); font-size: .8rem; padding: .38rem .7rem;
+  @media (prefers-reduced-motion: reduce) { .keycard.armed .state::before { animation: none; } }
+  .keycard button {
+    font-family: var(--mono); font-size: .74rem; padding: .3rem .7rem;
     border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
-    color: var(--ink); cursor: pointer;
+    color: var(--muted); cursor: pointer; margin-top: .5rem;
   }
-  .keybar button:hover { border-color: var(--ink); }
-  .subkeys { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .keycard button:hover { border-color: var(--ink); color: var(--ink); }
+  .subkeys { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .2rem; }
   .subkey { display: inline-flex; align-items: center; gap: .3rem; }
-  .subkey .sklab { color: var(--muted); font-size: .74rem; }
+  .subkey .sklab { color: var(--muted); font-size: .74rem; font-family: var(--mono); }
   .subkey input {
     font-family: var(--mono); font-size: .78rem; padding: .3rem .45rem;
     border: 1px solid var(--accent-line); border-radius: 2px; width: min(190px, 32vw);
-    background: var(--paper); color: var(--ink);
+    background: var(--raised); color: var(--ink);
   }
 
   /* ---- shape pad ------------------------------------------------------- */
@@ -98,30 +90,30 @@
   .shapebar button {
     font-family: var(--mono); font-size: .74rem; padding: .3rem .6rem;
     border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
-    color: var(--ink); cursor: pointer;
+    color: var(--ink); cursor: pointer; flex: none;
   }
-  .shapebar button:hover { border-color: var(--accent); color: var(--accent); }
-  .shapehint { font-family: var(--mono); font-size: .68rem; color: var(--faint); }
+  .shapebar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .shapebar button:disabled { color: var(--faint); cursor: not-allowed; }
+  /* The hint used to sit inline and wrap between the buttons. Its own row. */
+  .shapehint { font-family: var(--mono); font-size: .68rem; color: var(--faint);
+               flex: 1 0 100%; margin-top: .15rem; line-height: 1.5; }
   .padwrap { border: 1px solid var(--line); border-radius: 2px; background: var(--paper); overflow: auto; }
   #pad { display: block; width: 100%; height: 260px; touch-action: none; }
-  #pad .edge { stroke: var(--faint); stroke-width: 1.5; fill: none; }
-  #pad .edge.hot { stroke: var(--error); stroke-width: 2.5; }
+  #pad .edge { stroke: var(--faint); stroke-width: 1.5; fill: none; pointer-events: none; }
   #pad .edgehit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
   #pad .nodebox { fill: var(--card); stroke: var(--line); }
   #pad .nodebox.term { stroke: var(--accent); }
   #pad .nodebox.sel  { stroke: var(--armed); }
-  #pad .nodebox.off  { stroke: var(--faint); stroke-dasharray: 4 3; }
+  #pad .nodebox.detached { stroke-dasharray: 4 3; }
   #pad .nlab { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
   #pad .nsub { font-family: var(--mono); font-size: 9px; fill: var(--faint); }
   #pad .port { fill: var(--accent); opacity: .85; cursor: crosshair; }
-  /* The ghost follows the cursor, so it sat directly under elementFromPoint on
-     drop: the hit test returned the ghost, closest("[data-node]") was null, and
-     the edge was never created. Drag-to-connect — the whole point of the pad —
-     silently did nothing. Decorative marks must never be hit-testable; only
-     .edgehit and the nodes are. */
+  /* The ghost follows the cursor, so on drop it sat directly under
+     elementFromPoint: the hit test returned the ghost, closest("[data-node]")
+     was null, and the edge was never created. Decorative marks must never be
+     hit-testable. */
   #pad .ghost { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none;
                 pointer-events: none; }
-  #pad .edge { pointer-events: none; }
   #pad text { pointer-events: none; user-select: none; }
   #pad .grab { cursor: grab; }
 
@@ -193,12 +185,28 @@
   .mast h1 .never { color: var(--accent); }
   .mast p { color: var(--muted); margin: .4rem 0 0; max-width: 60ch; }
 
-  .grid { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 1.2rem; }
-  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .grid {
+    display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+    gap: 1.2rem; align-items: start;
+  }
+  /* controls, work, folds — the folds sit under the controls on a wide screen */
+  .grid > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .grid > .work         { grid-column: 2; grid-row: 1 / span 2; }
+  .grid > .folds        { grid-column: 1; grid-row: 2; }
+  .folds > .fold:first-child { margin-top: 1rem; }
+  @media (max-width: 820px) {
+    /* One column: the canvas is the point of the page, so it comes before the
+       things you only sometimes open. Otherwise three folds push it off-screen
+       and you scroll past Run to reach the shape you are editing. */
+    .grid { grid-template-columns: 1fr; }
+    .grid > :nth-child(1) { grid-column: 1; grid-row: auto; order: 1; }
+    .grid > .work         { grid-column: 1; grid-row: auto; order: 2; }
+    .grid > .folds        { grid-column: 1; grid-row: auto; order: 3; }
+  }
 
   .card {
     background: var(--card); border: 1px solid var(--line);
-    border-radius: 3px; padding: 1rem 1.05rem;
+    border-radius: 3px; padding: .85rem 1.05rem 1rem;
   }
   .card + .card { margin-top: 1rem; }
   .card h2 {
@@ -209,12 +217,19 @@
   label.field span {
     display: block; font-size: .78rem; color: var(--muted); margin: 0 0 .3rem;
   }
+  /* Side-by-side fields whose captions wrap to different heights put their
+     inputs on different baselines. Let the caption absorb the slack so the
+     inputs line up regardless of how long the label is. */
+  .row2 { align-items: stretch; }
+  .row2 > label.field { display: flex; flex-direction: column; margin-bottom: 0; }
+  .row2 > label.field > span { flex: 1 1 auto; }
   textarea, input.txt {
     width: 100%; font-family: var(--mono); font-size: .82rem;
     border: 1px solid var(--line); border-radius: 2px; padding: .55rem .6rem;
     background: var(--raised); color: var(--ink); resize: vertical;
   }
-  textarea { min-height: 250px; line-height: 1.45; white-space: pre; }
+  textarea { min-height: 220px; line-height: 1.45; white-space: pre; }
+  .card + .fold { margin-top: 1rem; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 
   .runline { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin: .2rem 0 .8rem; }
@@ -294,17 +309,6 @@
 </style>
 </head>
 <body>
-  <!-- SIGNATURE: the key never leaves this bar. It is the product. -->
-  <div class="keybar" id="keybar">
-    <span class="dot"></span>
-    <span class="state" id="keyState">No key</span>
-    <span class="note" id="keyNote">— paste your Anthropic key to run</span>
-    <span class="spacer"></span>
-    <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
-    <span class="subkeys" id="subkeys"></span>
-    <button id="keyForget" type="button">Forget key</button>
-  </div>
-
   <div class="wrap">
     <header class="mast">
       <h1>Harness <span class="never">Builder</span></h1>
@@ -321,6 +325,21 @@
     <div class="grid">
       <!-- controls -->
       <div>
+        <!-- THE KEY. It used to be a sticky bar pinned above the masthead, so the
+             first thing a visitor read was "No key" and a Forget button, before
+             anything had told them what the page was. It belongs with the other
+             inputs; the armed state is what carries the promise, not the position. -->
+        <div class="card keycard" id="keybar">
+          <h2>Your key <span class="state" id="keyState">No key</span></h2>
+          <label class="field">
+            <span id="keyNote">stays in this tab, in memory — never sent to the backend</span>
+            <input class="txt" id="keyInput" type="password" placeholder="sk-ant-..."
+                   autocomplete="off" spellcheck="false" />
+          </label>
+          <span class="subkeys" id="subkeys"></span>
+          <button id="keyForget" type="button" hidden>Forget key</button>
+        </div>
+
         <div class="card">
           <h2>Task</h2>
           <label class="field">
@@ -362,6 +381,9 @@
 
         <!-- The JSON is the source of truth, but it is not what most people want
              to look at. Collapsed by default; the Shape canvas is the view. -->
+      </div>
+
+      <div class="folds">
         <details class="fold">
           <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
           <div class="fbody">
@@ -408,7 +430,7 @@
       </div>
 
       <!-- results -->
-      <div>
+      <div class="work">
         <!-- SHAPE PAD. Edits the TOPOLOGY only: which roles exist and what feeds
              what. It deliberately cannot see or touch a system prompt, a model
              id, a substrate or an axis — those stay the textarea's, so a canvas
@@ -419,6 +441,7 @@
             <button type="button" id="addRole">+ role</button>
             <button type="button" id="renameRoleBtn" disabled>rename</button>
             <button type="button" id="detachRole" disabled>&minus; detach</button>
+            <button type="button" id="centerPad" title="recentre the graph without moving anything relative to anything else">center</button>
             <button type="button" id="autoLayout">tidy</button>
             <span class="shapehint" id="shapeHint">click a node to select &middot; double-click to rename &middot; drag its right edge onto another to feed it &middot; prompts live in the config below</span>
           </div>
@@ -499,12 +522,14 @@ function keyFor(role, substrates) {
 }
 
 function setArmed(on) {
-  const bar = $("keybar");
-  bar.classList.toggle("armed", on);
-  $("keyState").textContent = on ? "Key in memory" : "No key";
+  $("keybar").classList.toggle("armed", on);
+  $("keyState").textContent = on ? "in memory" : "No key";
   $("keyNote").textContent = on
-    ? "· never written to disk · never sent to the backend"
-    : "— paste your Anthropic key to run";
+    ? "never written to disk, never sent to the backend — gone when this tab closes"
+    : "stays in this tab, in memory — never sent to the backend";
+  // A "Forget key" button with no key to forget is furniture that raises a
+  // question the page has not answered yet.
+  $("keyForget").hidden = !on && !Object.keys(SUBSTRATE_KEYS).length;
 }
 $("keyInput").addEventListener("input", (e) => {
   API_KEY = e.target.value.trim() || null;
@@ -1641,6 +1666,39 @@ $("addRole").addEventListener("click", () => {
   }, "added a role — set its prompt in the config below");
 });
 
+// CENTER is the non-destructive counterpart to tidy. Dragging a node can put it
+// outside the visible box with no way back except tidy, which throws the whole
+// arrangement away. This translates every node by the same offset, so the layout
+// you built is preserved exactly and only its position on the canvas changes.
+$("centerPad").addEventListener("click", () => {
+  const obj = readCfg();
+  if (!obj || !obj.base) { padSay("The config doesn't parse — nothing to centre.", true); return; }
+  const lay = padLayout(obj.base);
+  if (!lay) { padSay("This graph is not runnable, so it can't be laid out.", true); return; }
+  const nodes = Object.keys(lay.g);
+  if (!nodes.length) return;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    const p = padPoint(n, lay);
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + NODE_W); maxY = Math.max(maxY, p.y + NODE_H);
+  }
+  // Materialise every position first: a node still on auto-layout has no entry
+  // in padPos, and shifting only the dragged ones would tear the graph apart.
+  const w = maxX - minX, h = maxY - minY;
+  const box = $("pad").getBoundingClientRect();
+  const vh = Math.max(200, box.height || 260);
+  const dx = PAD_M - minX;
+  const dy = Math.max(PAD_M, (vh - h) / 2) - minY;
+  for (const n of nodes) {
+    const p = padPoint(n, lay);
+    padPos[n] = { x: p.x + dx, y: p.y + dy };
+  }
+  savePos(); renderPad();
+  padSay(`centred — ${nodes.length} node${nodes.length === 1 ? "" : "s"} moved together, nothing rewired`);
+});
+
 let padPosUndo = null;
 $("autoLayout").addEventListener("click", () => {
   // Hand placements are the user's, and this is the one gesture allowed to
@@ -1731,8 +1789,13 @@ document.addEventListener("keydown", (e) => {
 function syncPadButtons() {
   const b = $("detachRole");
   b.disabled = !padSel;
-  b.textContent = padSel ? `\u2212 detach ${padSel}` : "\u2212 detach";
-  $("renameRoleBtn").disabled = !padSel;
+  // Naming the target is useful; letting the label resize the whole toolbar on
+  // every selection is not. The name goes in the tooltip, the width stays put.
+  b.textContent = "\u2212 detach";
+  b.title = padSel ? `detach ${padSel} from the graph (its prompt stays in the config)` : "select a node first";
+  const rb = $("renameRoleBtn");
+  rb.disabled = !padSel;
+  rb.title = padSel ? `rename ${padSel}` : "select a node first";
 }
 
 $("config").addEventListener("input", () => renderPad());
