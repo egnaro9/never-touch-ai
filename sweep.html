@@ -154,9 +154,15 @@
                 color: var(--faint); font-size: .72rem; }
   .fold .fbody { padding: 0 1.05rem 1rem; }
   .fold .fnote { font-size: .78rem; color: var(--muted); margin: 0 0 .5rem; }
+  .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
+  .cfgbtn { font-family: var(--mono); font-size: .72rem; padding: .28rem .6rem;
+            border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+            color: var(--muted); cursor: pointer; }
+  .cfgbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .cfgnote { font-family: var(--mono); font-size: .66rem; color: var(--faint); flex: 1 0 100%; line-height: 1.5; }
 
   /* ---- prove-it panel --------------------------------------------------- */
-  .verify { margin-top: 1rem; font-size: .8rem; background: var(--card);
+  .verify { font-size: .8rem; background: var(--card);
             border: 1px solid var(--line); border-radius: 3px; padding: .8rem 1.05rem; }
   .verify summary {
     cursor: pointer; list-style: none; font-family: var(--mono); font-size: .78rem;
@@ -208,8 +214,6 @@
   .grid > :nth-child(1) { grid-column: 1; grid-row: 1; }
   .grid > .work         { grid-column: 2; grid-row: 1 / span 2; }
   .grid > .folds        { grid-column: 1; grid-row: 2; }
-  .folds > .fold:first-child { margin-top: 1rem; }
-  .work > .fold:first-child { margin-top: 0; margin-bottom: 1rem; }
   @media (max-width: 820px) {
     /* One column: the canvas is the point of the page, so it comes before the
        things you only sometimes open. Otherwise three folds push it off-screen
@@ -224,7 +228,23 @@
     background: var(--card); border: 1px solid var(--line);
     border-radius: 3px; padding: .85rem 1.05rem 1rem;
   }
-  .card + .card { margin-top: 1rem; }
+  /* One box, one gap. Cards, folds and the verify panel used to carry three
+     different margin rules plus :first-child exceptions, so the space between
+     boxes changed depending on which two happened to be adjacent. */
+  .card, .fold, .verify { margin: 0 0 1rem; }
+  .grid > div > :last-child, .grid > .work > :last-child { margin-bottom: 0; }
+
+  /* Every card collapses by the same mechanism the folds already use. */
+  .card > h2 { cursor: pointer; display: flex; align-items: baseline; gap: .5rem; user-select: none; }
+  .card > h2::before {
+    content: "\25B8"; color: var(--accent); font-size: .8rem; display: inline-block;
+    transition: transform .12s; transform: rotate(90deg);
+  }
+  .card.collapsed > h2::before { transform: rotate(0deg); }
+  .card > h2:hover { color: var(--ink); }
+  .card > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card.collapsed > .cardbody { display: none; }
+  .card.collapsed { padding-bottom: .85rem; }
   .card h2 {
     font-size: .74rem; text-transform: uppercase; letter-spacing: .09em;
     color: var(--muted); margin: 0 0 .7rem; font-weight: 700;
@@ -245,7 +265,6 @@
     background: var(--raised); color: var(--ink); resize: vertical;
   }
   textarea { min-height: 220px; line-height: 1.45; white-space: pre; }
-  .card + .fold { margin-top: 1rem; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 
   .runline { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin: .2rem 0 .8rem; }
@@ -361,10 +380,15 @@
                 <input class="txt" id="provName" type="text" placeholder="local_llama" spellcheck="false" />
               </label>
               <label class="field">
+                <span>Provider</span>
+                <select class="txt" id="provPreset"></select>
+              </label>
+              <label class="field">
                 <span>Wire format</span>
                 <select class="txt" id="provShape">
-                  <option value="openai">OpenAI-compatible (vLLM, LM Studio, Ollama, OpenRouter…)</option>
+                  <option value="openai">OpenAI-compatible</option>
                   <option value="anthropic">Anthropic</option>
+                  <option value="gemini">Google Gemini</option>
                   <option value="mock">Mock — answers locally, costs nothing</option>
                 </select>
               </label>
@@ -372,8 +396,7 @@
                 <span>Base URL</span>
                 <input class="txt" id="provUrl" type="text" value="http://localhost:11434/v1" spellcheck="false" />
               </label>
-              <p class="provnote">api.openai.com cannot be called from a browser — it returns no
-                <code>access-control-allow-origin</code>. Point this at an endpoint you host.</p>
+              <p class="provnote" hidden></p>
               <button type="button" id="provAdd">add it</button>
             </div>
           </div>
@@ -402,6 +425,20 @@
     </div>
   </details>
 
+  <details class="fold">
+          <summary>Backend <span class="fsub" id="backendState">not checked</span></summary>
+          <div class="fbody">
+            <div class="backend" id="backend">
+              <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
+                     value="http://localhost:8000" />
+              <input class="txt" id="scoreToken" type="password" placeholder="/score token"
+                     autocomplete="off" style="width:170px;display:inline-block;padding:.2rem .4rem;margin-left:.4rem" />
+              <div style="margin-top:.4rem">/score executes generated code, so it is token-gated —
+                the server prints a token on boot (or set <code>NTAI_TOKEN</code>).</div>
+            </div>
+          </div>
+  </details>
+
         <div class="card">
           <h2>Task</h2>
           <label class="field">
@@ -409,6 +446,7 @@
             <select class="txt" id="taskSource">
               <option value="single">Single task (below)</option>
               <option value="suite">Curated coding suite (from backend)</option>
+              <option value="custom">Your own suite (paste below)</option>
             </select>
           </label>
           <label class="field" id="singleTaskField">
@@ -416,6 +454,25 @@
             <textarea id="task" style="min-height:80px">Write a function `fib(n: int) -> int` that returns the nth Fibonacci number iteratively, where fib(0)=0 and fib(1)=1. Return only the code.</textarea>
           </label>
           <div class="runline" id="suiteInfo" style="display:none">—</div>
+
+          <!-- BRING YOUR OWN SUITE. A fixed benchmark answers "which harness is
+               best at the twenty problems I happened to write". Your own tasks
+               answer the question you actually have — and more of them is also
+               the only real fix for the resolution limit: 20 tasks move in
+               5-point steps, so the sign test often cannot decide. -->
+          <div id="customSuiteBox" hidden>
+            <label class="field">
+              <span>Your suite &mdash; a JSON array of tasks, or {"tasks": [...]}</span>
+              <textarea id="customSuite" spellcheck="false" style="min-height:150px"></textarea>
+            </label>
+            <div class="msg" id="customSuiteMsg"></div>
+            <div class="cfgio">
+              <label class="cfgbtn" for="suiteFile">load a suite file&hellip;</label>
+              <input type="file" id="suiteFile" accept=".json,application/json" hidden />
+              <span class="cfgnote">a task needs an id, a prompt, and checks — python checks run
+                locally through the backend; contains/regex/exact are pure predicates</span>
+            </div>
+          </div>
         </div>
 
         <!-- RUN. Deliberately OUTSIDE the collapsible config: the button that
@@ -446,19 +503,6 @@
       </div>
 
       <div class="folds">
-        <details class="fold">
-          <summary>Backend <span class="fsub" id="backendState">not checked</span></summary>
-          <div class="fbody">
-            <div class="backend" id="backend">
-              <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
-                     value="http://localhost:8000" />
-              <input class="txt" id="scoreToken" type="password" placeholder="/score token"
-                     autocomplete="off" style="width:170px;display:inline-block;padding:.2rem .4rem;margin-left:.4rem" />
-              <div style="margin-top:.4rem">/score executes generated code, so it is token-gated —
-                the server prints a token on boot (or set <code>NTAI_TOKEN</code>).</div>
-            </div>
-          </div>
-        </details>
       </div>
 
       <!-- results -->
@@ -467,6 +511,12 @@
           <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
           <div class="fbody">
             <p class="fnote">A base config plus axes to vary → the full matrix is generated for you.</p>
+            <div class="cfgio">
+              <label class="cfgbtn" for="cfgFile">load a harness&hellip;</label>
+              <input type="file" id="cfgFile" accept=".json,application/json" hidden />
+              <button type="button" class="cfgbtn" id="cfgSave">save this harness</button>
+              <span class="cfgnote">a harness IS this JSON — keep it in your repo and load it here</span>
+            </div>
             <textarea id="config" spellcheck="false"></textarea>
           </div>
         </details>
@@ -881,6 +931,24 @@ function callMock(role, userContent, deps) {
   };
 }
 
+// The providers the crash test already speaks, so the two tools agree on what
+// is reachable. `shape` picks the adapter; the OpenAI-shaped ones differ only by
+// base_url. Browser-callability is a vendor policy, not a capability — the ones
+// that refuse are labelled, because finding out by watching a sweep fail is an
+// expensive way to learn it.
+const PROVIDER_PRESETS = {
+  anthropic:   { label: "Anthropic",                        shape: "anthropic", base: "https://api.anthropic.com" },
+  gemini:      { label: "Google Gemini",                    shape: "gemini",    base: "" },
+  xai:         { label: "xAI (Grok)",                       shape: "openai",    base: "https://api.x.ai/v1" },
+  groq:        { label: "Groq (Llama, gpt-oss…)",           shape: "openai",    base: "https://api.groq.com/openai/v1" },
+  openrouter:  { label: "OpenRouter (many models, one key)", shape: "openai",   base: "https://openrouter.ai/api/v1" },
+  together:    { label: "Together",                         shape: "openai",    base: "https://api.together.xyz/v1" },
+  openai:      { label: "OpenAI — blocked in-browser",      shape: "openai",    base: "https://api.openai.com/v1",
+                 warn: "api.openai.com returns no access-control-allow-origin on the response, so a browser-direct call is discarded whatever key you send." },
+  local:       { label: "Local / self-hosted (vLLM, LM Studio, Ollama)", shape: "openai", base: "http://localhost:11434/v1" },
+  mock:        { label: "Mock — answers locally, costs nothing", shape: "mock", base: "" },
+};
+
 async function callProvider(role, userContent, substrates, deps) {
   // WHERE this role runs. Same model id can be served from different endpoints;
   // holding the id fixed and varying this is the only way to see the difference.
@@ -888,9 +956,12 @@ async function callProvider(role, userContent, substrates, deps) {
   const shape = sub ? (sub.shape || "anthropic") : "anthropic";
   if (shape === "mock") return callMock(role, userContent, deps);
 
-  const url = shape === "openai"
-    ? ((sub && sub.base_url) || "https://api.openai.com/v1") + "/chat/completions"
-    : ((sub && sub.base_url) || "https://api.anthropic.com") + "/v1/messages";
+  const url = shape === "gemini"
+    ? `${(sub && sub.base_url) || "https://generativelanguage.googleapis.com"}` +
+      `/v1beta/models/${encodeURIComponent(role.model)}:generateContent`
+    : shape === "openai"
+      ? ((sub && sub.base_url) || "https://api.openai.com/v1") + "/chat/completions"
+      : ((sub && sub.base_url) || "https://api.anthropic.com") + "/v1/messages";
 
   // The credential that belongs to THIS substrate, not whatever key happens to
   // be in the bar. Returning null here is a refusal, not a fallback.
@@ -900,13 +971,18 @@ async function callProvider(role, userContent, substrates, deps) {
       error: `no key for substrate '${role.substrate}' (${shape}) — add one in the key bar` };
   }
 
-  const headers = shape === "openai"
+  const headers = shape === "gemini"
+    ? { "content-type": "application/json", "x-goog-api-key": key }
+    : shape === "openai"
     ? { "content-type": "application/json", "authorization": "Bearer " + key }
     : { "content-type": "application/json", "x-api-key": key,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true" };
 
-  const body = shape === "openai"
+  const body = shape === "gemini"
+    ? { contents: [{ parts: [{ text: (role.system ? role.system + "\n\n" : "") + userContent }] }],
+        generationConfig: { maxOutputTokens: role.max_tokens || 1024 } }
+    : shape === "openai"
     ? { model: role.model, max_tokens: role.max_tokens || 1024,
         messages: [...(role.system ? [{ role: "system", content: role.system }] : []),
                    { role: "user", content: userContent }] }
@@ -951,14 +1027,20 @@ async function callProvider(role, userContent, substrates, deps) {
     return { ok: false, error: msg, latency_ms, input_tokens: 0, output_tokens: 0, text: "" };
   }
   const data = await res.json();
-  const text = shape === "openai"
-    ? (((data.choices || [])[0] || {}).message || {}).content || ""
-    : (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  const u = data.usage || {};
+  const text = shape === "gemini"
+    ? ((((data.candidates || [])[0] || {}).content || {}).parts || [])
+        .map((p) => p.text || "").join("")
+    : shape === "openai"
+      ? (((data.choices || [])[0] || {}).message || {}).content || ""
+      : (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  // Each vendor names its token counts differently, and a missing count must
+  // stay 0 rather than be invented — costOf already refuses to price what it
+  // cannot measure.
+  const u = data.usage || data.usageMetadata || {};
   return {
     ok: true, latency_ms, text,
-    input_tokens: u.input_tokens || u.prompt_tokens || 0,
-    output_tokens: u.output_tokens || u.completion_tokens || 0
+    input_tokens: u.input_tokens || u.prompt_tokens || u.promptTokenCount || 0,
+    output_tokens: u.output_tokens || u.completion_tokens || u.candidatesTokenCount || 0
   };
 }
 
@@ -1112,13 +1194,60 @@ async function loadSuite(force) {
   return SUITE;
 }
 
-// The tasks to run: the curated suite, or the single textarea task.
+// The tasks to run: your own suite, the curated one, or the single textarea task.
 async function getTasks(cfg) {
-  if ($("taskSource").value === "suite") {
+  const src = $("taskSource").value;
+  if (src === "custom") return parseCustomSuite().tasks;
+  if (src === "suite") {
     const s = await loadSuite();
     return s.tasks.map((t) => ({ id: t.id, prompt: t.prompt, checks: t.checks || [] }));
   }
   return [{ id: "task", prompt: $("task").value.trim(), checks: (cfg && cfg.checks) || [] }];
+}
+
+// A pasted suite is validated here and nowhere else, so every caller gets the
+// same refusal. Throws with a reason; never returns a half-usable suite.
+function parseCustomSuite() {
+  const raw = $("customSuite").value.trim();
+  if (!raw) throw new Error("Paste a suite, or switch the task source back.");
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { throw new Error("that suite didn't parse as JSON: " + e.message); }
+  const list = Array.isArray(obj) ? obj : obj.tasks;
+  if (!Array.isArray(list) || !list.length)
+    throw new Error("a suite is a JSON array of tasks, or an object with a `tasks` array.");
+
+  const seen = new Set(), tasks = [];
+  list.forEach((t, i) => {
+    if (!t || typeof t !== "object") throw new Error(`task #${i + 1} is not an object`);
+    const id = String(t.id || "").trim() || `task_${i + 1}`;
+    // Duplicate ids would silently collapse two different tasks into one column
+    // of the matrix, and the paired test would compare a task against itself.
+    if (seen.has(id)) throw new Error(`two tasks share the id '${id}' — ids must be unique`);
+    seen.add(id);
+    const prompt = String(t.prompt || "").trim();
+    if (!prompt) throw new Error(`task '${id}' has no prompt`);
+    tasks.push({ id, prompt, checks: Array.isArray(t.checks) ? t.checks : [] });
+  });
+  const scorable = tasks.filter((t) => t.checks.length).length;
+  return { tasks, scorable };
+}
+
+// Live feedback while typing, because finding out your suite is malformed by
+// watching a sweep refuse to start is a slow way to learn it.
+function validateCustomSuite() {
+  const box = $("customSuiteMsg");
+  if (!$("customSuite").value.trim()) { box.className = "msg"; box.textContent = ""; updateEstimate(); return; }
+  try {
+    const { tasks, scorable } = parseCustomSuite();
+    box.className = "msg ok";
+    box.textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"}, ${scorable} scorable` +
+      (scorable < tasks.length ? " — tasks with no checks run but cannot be scored" : "") +
+      (tasks.length < 20
+        ? ` · ${tasks.length} tasks means each one moves the score ${(100 / tasks.length).toFixed(1)} points`
+        : "");
+  } catch (e) { box.className = "msg err"; box.textContent = e.message; }
+  updateEstimate();
 }
 
 function logLine(html, fail) {
@@ -1265,8 +1394,10 @@ function updateEstimate() {
     // the estimate honest instead of multiplying by the base's shape.
     const nodesPer = configs.map((c) => orderOf(c).length);
     const totalNodes = nodesPer.reduce((a, b) => a + b, 0);
-    const suiteMode = $("taskSource").value === "suite";
-    const nTasks = suiteMode ? (SUITE ? SUITE.tasks.length : null) : 1;
+    const src = $("taskSource").value;
+    const nTasks = src === "suite" ? (SUITE ? SUITE.tasks.length : null)
+                 : src === "custom" ? (() => { try { return parseCustomSuite().tasks.length; } catch { return null; } })()
+                 : 1;
     const calls = nTasks === null ? null : totalNodes * nTasks * runs;
     const shapes = configs.map((c, i) => `${shapeLabel(c)} (${nodesPer[i]})`).join(", ");
     $("estimate").innerHTML =
@@ -1513,9 +1644,12 @@ $("runBtn").addEventListener("click", () => {
 
 // task source toggle: show/hide the single-task field, load the suite, re-estimate
 $("taskSource").addEventListener("change", async () => {
-  const suiteMode = $("taskSource").value === "suite";
-  $("singleTaskField").style.display = suiteMode ? "none" : "";
+  const src = $("taskSource").value;
+  const suiteMode = src === "suite";
+  $("singleTaskField").style.display = src === "single" ? "" : "none";
   $("suiteInfo").style.display = suiteMode ? "" : "none";
+  $("customSuiteBox").hidden = src !== "custom";
+  if (src === "custom") validateCustomSuite();
   if (suiteMode) {
     $("suiteInfo").textContent = "loading suite…";
     try {
@@ -1924,10 +2058,33 @@ $("addProvToggle").addEventListener("click", () => {
   f.hidden = !f.hidden;
   $("addProvToggle").textContent = f.hidden ? "+ another provider" : "\u2212 cancel";
 });
+(() => {
+  const sel = $("provPreset");
+  if (!sel) return;
+  for (const [id, p] of Object.entries(PROVIDER_PRESETS)) {
+    const o = document.createElement("option");
+    o.value = id; o.textContent = p.label;
+    sel.appendChild(o);
+  }
+  sel.value = "local";
+  const apply = () => {
+    const p = PROVIDER_PRESETS[sel.value];
+    if (!p) return;
+    $("provShape").value = p.shape;
+    $("provUrl").value = p.base;
+    $("provUrlField").hidden = p.shape === "mock" || p.shape === "gemini";
+    if (!$("provName").value.trim()) $("provName").value = sel.value;
+    const note = $("addProvForm").querySelector(".provnote");
+    note.textContent = p.warn || "";
+    note.hidden = !p.warn;
+  };
+  sel.addEventListener("change", apply);
+  apply();
+})();
+
 $("provShape").addEventListener("change", () => {
   const shape = $("provShape").value;
-  $("provUrlField").hidden = shape === "mock";
-  $("provUrl").value = shape === "anthropic" ? "https://api.anthropic.com" : "http://localhost:11434/v1";
+  $("provUrlField").hidden = shape === "mock" || shape === "gemini";
 });
 $("provAdd").addEventListener("click", () => {
   const name = $("provName").value.trim();
@@ -2153,6 +2310,87 @@ $("asstSend").addEventListener("click", () => { askAssistant().catch((e) => {
   $("asstSend").disabled = false; $("asstSend").textContent = "ask";
 }); });
 $("asstInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("asstSend").click(); });
+
+$("customSuite").addEventListener("input", validateCustomSuite);
+
+// Reading a file the user picked is local: nothing is uploaded anywhere.
+function readJsonFile(input, onText) {
+  input.addEventListener("change", () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => onText(String(r.result || ""), f.name);
+    r.readAsText(f);
+    input.value = "";     // let the same file be picked again after an edit
+  });
+}
+
+readJsonFile($("suiteFile"), (text) => {
+  $("customSuite").value = text;
+  $("taskSource").value = "custom";
+  $("taskSource").dispatchEvent(new Event("change"));
+});
+
+// A harness IS this JSON, so loading one is just filling the textarea — and it
+// goes through the same parse the rest of the page uses, so a bad file is
+// refused with a reason instead of leaving the page half-loaded.
+readJsonFile($("cfgFile"), (text, name) => {
+  const before = $("config").value;
+  $("config").value = text;
+  try {
+    const c = parseConfig();
+    expandSweep(c.base, c.axes).forEach((x) => orderOf(x));
+  } catch (e) {
+    $("config").value = before;
+    padSay(`${name} is not a runnable harness: ${e.message} — nothing was loaded`, true);
+    return;
+  }
+  $("config").dispatchEvent(new Event("input"));
+  padSay(`loaded ${name}`);
+});
+
+$("cfgSave").addEventListener("click", () => {
+  let name = "harness";
+  try { name = parseConfig().base.name || "harness"; } catch {}
+  const blob = new Blob([$("config").value], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${name.replace(/[^A-Za-z0-9_-]+/g, "_")}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// Make every card collapsible with the same gesture the folds use, without
+// restructuring the markup: the content after the heading is wrapped once, at
+// boot, and the heading becomes the toggle. Choices persist, because a panel
+// you close should stay closed.
+(() => {
+  for (const card of document.querySelectorAll(".card")) {
+    const h2 = card.querySelector(":scope > h2");
+    if (!h2) continue;
+    const body = document.createElement("div");
+    body.className = "cardbody";
+    while (h2.nextSibling) body.appendChild(h2.nextSibling);
+    card.appendChild(body);
+
+    const key = "fold." + (h2.textContent.trim().split(/\s+/)[0] || "x").toLowerCase();
+    const set = (open) => {
+      card.classList.toggle("collapsed", !open);
+      h2.setAttribute("aria-expanded", String(open));
+      try { localStorage.setItem(key, open ? "1" : "0"); } catch {}
+    };
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch {}
+    set(saved === null ? true : saved === "1");
+
+    h2.setAttribute("role", "button");
+    h2.tabIndex = 0;
+    h2.addEventListener("click", () => set(card.classList.contains("collapsed")));
+    h2.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); h2.click(); }
+    });
+  }
+})();
 
 updateEstimate();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
