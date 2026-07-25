@@ -131,6 +131,11 @@
                 pointer-events: none; }
   #pad text { pointer-events: none; user-select: none; }
   #pad .grab { cursor: grab; }
+  #pad { cursor: grab; }
+  #pad.panning { cursor: grabbing; }
+  #pad.locked .port { cursor: grab; }
+  #pad.locked .edgehit { cursor: grab; }
+  .shapebar button.on { border-color: var(--armed); color: var(--armed); background: var(--armed-soft); }
 
   /* ---- collapsible sections --------------------------------------------- */
   .fold {
@@ -591,6 +596,7 @@
             <button type="button" id="addRole">+ role</button>
             <button type="button" id="renameRoleBtn" disabled>rename</button>
             <button type="button" id="detachRole" disabled>&minus; detach</button>
+            <button type="button" id="padLock" title="lock the layout — pan and zoom still work, but nothing can be moved or rewired">lock</button>
             <button type="button" id="zoomOut" title="zoom out">&minus;</button>
             <button type="button" id="zoomIn" title="zoom in">+</button>
             <button type="button" id="centerPad" title="recentre and reset the zoom, without moving anything relative to anything else">center</button>
@@ -1824,6 +1830,13 @@ const savePos = () => { try { localStorage.setItem(POS_KEY, JSON.stringify(padPo
 let padSel = null, padDrag = null, padLink = null;
 let padZoom = 1;                 // >1 magnifies; the frame shrinks, the graph does not move
 const PAD_ZOOM_MIN = 0.35, PAD_ZOOM_MAX = 4;
+// Panning also moves the FRAME, so it changes nothing about the graph. Kept
+// separately from zoom so centre can reset both.
+let padPanX = 0, padPanY = 0, padPanning = null;
+// Locked means look, don't touch: pan and zoom still work, but nothing can be
+// dragged, rewired, renamed or detached. It is for reading a shape you did not
+// build without editing it by accident.
+let padLocked = false;
 
 function padSay(text, bad) {
   const m = $("padMsg");
@@ -1838,6 +1851,9 @@ function readCfg() {
 
 // The single writer. `mutate(base)` may touch base.roles keys and base.graph.
 function writeShape(mutate, describe) {
+  // One gate, at the single writer: nothing can edit the shape while locked,
+  // however it was triggered — button, key, drag, or a path added later.
+  if (padLocked) { padSay("The layout is locked — unlock to change it.", true); return false; }
   const obj = readCfg();
   if (!obj || !obj.base) {
     padSay("The config doesn't parse right now — fix the JSON and the shape will follow. " +
@@ -1948,11 +1964,13 @@ function renderPad() {
   // makes the view chase the node you are dragging: the frame shifts under the
   // cursor and the node lands short of where you dropped it (an 80px drag moved
   // it 5). Freeze while a drag or link is live, then settle on release.
+  // A pan is a deliberate change to the frame, so it must NOT be held; a node
+  // drag must, or the frame chases the node.
   const gesturing = !!(padDrag || padLink);
   const held = pad.getAttribute("viewBox");
   pad.setAttribute("viewBox", (gesturing && held)
     ? held
-    : `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`);
+    : `${cx - vw / 2 + padPanX} ${cy - vh / 2 + padPanY} ${vw} ${vh}`);
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   let svg = "";
@@ -2006,6 +2024,15 @@ $("pad").addEventListener("pointerdown", (e) => {
   const nodeEl = e.target.closest("[data-node]");
   const edgeEl = e.target.closest("[data-parent]");
 
+  // Empty canvas — or anything at all while locked — grabs the map.
+  if (padLocked || (!portEl && !nodeEl && !edgeEl)) {
+    const at = padXY(e);
+    padPanning = { x: at.x, y: at.y, px: padPanX, py: padPanY };
+    $("pad").setPointerCapture(e.pointerId);
+    $("pad").classList.add("panning");
+    return;
+  }
+
   if (edgeEl) {                                   // cut an edge
     const parent = edgeEl.dataset.parent, child = edgeEl.dataset.child;
     writeShape((base) => {
@@ -2034,6 +2061,18 @@ $("pad").addEventListener("pointerdown", (e) => {
 });
 
 $("pad").addEventListener("pointermove", (e) => {
+  if (padPanning) {
+    // Convert the screen delta into viewBox units, so a pan tracks the cursor
+    // at every zoom level rather than drifting as you magnify.
+    const pad = $("pad"), r = pad.getBoundingClientRect();
+    const vb = (pad.getAttribute("viewBox") || "0 0 100 100").split(" ").map(Number);
+    const dx = (e.clientX - (r.left + (padPanning.x - vb[0]) / vb[2] * r.width)) / r.width * vb[2];
+    const dy = (e.clientY - (r.top + (padPanning.y - vb[1]) / vb[3] * r.height)) / r.height * vb[3];
+    padPanX = padPanning.px - dx;
+    padPanY = padPanning.py - dy;
+    renderPad();
+    return;
+  }
   if (padDrag) {
     const at = padXY(e);
     padPos[padDrag.n] = { x: Math.max(0, at.x - padDrag.dx), y: Math.max(0, at.y - padDrag.dy) };
@@ -2045,6 +2084,7 @@ $("pad").addEventListener("pointermove", (e) => {
 });
 
 $("pad").addEventListener("pointerup", (e) => {
+  if (padPanning) { padPanning = null; $("pad").classList.remove("panning"); return; }
   if (padDrag) { savePos(); padDrag = null; renderPad(); }   // re-centre once, on release
   if (padLink) {
     const drop = document.elementFromPoint(e.clientX, e.clientY);
@@ -2089,6 +2129,18 @@ function setPadZoom(z) {
   renderPad();
   padSay(padZoom === 1 ? "" : `zoom ${Math.round(padZoom * 100)}%`);
 }
+$("padLock").addEventListener("click", () => {
+  padLocked = !padLocked;
+  const b = $("padLock");
+  b.textContent = padLocked ? "unlock" : "lock";
+  b.classList.toggle("on", padLocked);
+  $("pad").classList.toggle("locked", padLocked);
+  padSel = null; syncPadButtons(); renderPad();
+  padSay(padLocked
+    ? "locked — drag anywhere to move the map; pan and zoom still work"
+    : "unlocked");
+});
+
 $("zoomIn").addEventListener("click", () => setPadZoom(padZoom * 1.25));
 $("zoomOut").addEventListener("click", () => setPadZoom(padZoom / 1.25));
 
@@ -2125,7 +2177,7 @@ $("centerPad").addEventListener("click", () => {
     padPos[n] = { x: PAD_M + (p.x - minX) * k, y: PAD_M + (p.y - minY) * k };
   }
   savePos();
-  padZoom = 1;                    // centre is the "put it back" control
+  padZoom = 1; padPanX = 0; padPanY = 0;   // centre is the "put it back" control
   const wrap = $("pad").parentElement;
   if (wrap) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
   renderPad();
@@ -2158,6 +2210,7 @@ $("autoLayout").addEventListener("click", () => {
 // had no visible answer. Same action, now also a button that reports why it is
 // unavailable.
 function detachSelected() {
+  if (padLocked) { padSay("The layout is locked — unlock to change it.", true); return; }
   if (!padSel) { padSay("Click a node first, then detach.", true); return; }
   const n = padSel;
   writeShape((base) => {
@@ -2176,6 +2229,7 @@ function detachSelected() {
 // Its PROMPT is not — the canvas does not display one, so it must not be able
 // to change one. That boundary is the whole reason this editor is safe.
 function renameSelected() {
+  if (padLocked) { padSay("The layout is locked — unlock to change it.", true); return; }
   if (!padSel) { padSay("Click a node first, then rename.", true); return; }
   const from = padSel;
   const to = window.prompt(`Rename role "${from}" to:`, from);
