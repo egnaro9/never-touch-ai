@@ -351,6 +351,15 @@
   .asst-log .turn.you .who { color: var(--muted); }
   .asst-log .turn.ai .who { color: var(--accent); }
   .asst-log .turn p { margin: 0 0 .4rem; color: var(--ink); white-space: pre-wrap; }
+  .asst-acts { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+  .asst-acts button {
+    font-family: var(--mono); font-size: .74rem; padding: .3rem .7rem;
+    border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+    color: var(--ink); cursor: pointer;
+  }
+  .asst-acts button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .asst-acts button:disabled { color: var(--faint); cursor: not-allowed; }
+  .asst-hint { font-family: var(--mono); font-size: .66rem; color: var(--faint); }
   .asst-in { display: flex; gap: .5rem; margin-top: .7rem; }
   .asst-in input { flex: 1 1 auto; }
   .asst-in button { font-family: var(--mono); font-size: .8rem; padding: .4rem .9rem;
@@ -639,6 +648,10 @@
           </div>
           <div class="asst-log" id="asstLog"><div class="empty">Ask what a config does, or describe the comparison you want.</div></div>
           <div id="asstProposal"></div>
+          <div class="asst-acts">
+            <button type="button" id="asstExplain" disabled>explain the last run</button>
+            <span class="asst-hint">it can read the scores; it never produces one</span>
+          </div>
           <div class="asst-in">
             <input class="txt" id="asstInput" type="text" spellcheck="false"
                    placeholder="e.g. compare a cheap solo drafter against a two-model panel" />
@@ -1589,6 +1602,11 @@ function renderResults() {
 // is one task. Both configs ran the SAME tasks, so per-task wins/losses is the
 // question the data can actually answer.
 function renderPaired() {
+  // Explaining needs something scored to explain. Set here rather than at the
+  // top of runSweep, where the matrix has just been cleared and the answer is
+  // always "no".
+  const ex = $("asstExplain");
+  if (ex) ex.disabled = !matrix.size;
   const cont = $("paired");
   if (CONFIG_ORDER.length < 2 || !matrix.size) { cont.innerHTML = ""; return; }
   const scoresFor = (cname) => {
@@ -2691,6 +2709,89 @@ async function callProviderChat(role, turns) {
              output_tokens: 0, text: "", error: `the browser blocked the call (${e.message})` };
   }
 }
+
+// EXPLAIN THE LAST RUN. The boundary is precise and worth stating exactly: the
+// assistant may READ scores, it may never PRODUCE one. Every number it is shown
+// was computed by fixed predicates and the sign test; its job is to say what the
+// pattern means, which is the one question the numbers cannot answer themselves.
+function buildRunSummary() {
+  if (!matrix.size) return null;
+  const lines = [];
+  const scoresFor = (c) => {
+    const row = matrix.get(c); if (!row) return {};
+    const o = {}; for (const [t, cell] of row) o[t] = cell.sum / cell.n; return o;
+  };
+
+  lines.push("PER-CONFIG RESULT (computed by fixed predicates, not by you):");
+  for (const name of CONFIG_ORDER) {
+    const a = agg.get(name);
+    const sc = scoresFor(name);
+    const vals = Object.values(sc);
+    const mean = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
+    lines.push(`  ${name} — ${a ? a.n : 0} runs, ` +
+      (mean === null ? "unscored" : `mean score ${(mean * 100).toFixed(0)}%`) +
+      `, ${a ? usd(a.cost) : "$0"} total` + (a && a.unpriced ? " (cost partly unknown)" : ""));
+  }
+
+  lines.push("", "PAIRED COMPARISON (exact sign test, already computed):");
+  for (let i = 0; i < CONFIG_ORDER.length; i++) {
+    for (let j = i + 1; j < CONFIG_ORDER.length; j++) {
+      const r = pairedCompare(scoresFor(CONFIG_ORDER[i]), scoresFor(CONFIG_ORDER[j]));
+      if (!r.shared) continue;
+      lines.push("  " + pairedVerdict(r, `#${i + 1} ${CONFIG_ORDER[i]}`, `#${j + 1} ${CONFIG_ORDER[j]}`));
+    }
+  }
+
+  // A handful of actual failures, which is where the explanation lives.
+  const fails = RUN_LOG.filter((r) => !r.ok || (r.score !== null && r.score !== undefined && r.score < 1)).slice(0, 4);
+  if (fails.length) {
+    lines.push("", "SOME RUNS THAT DID NOT SCORE FULL MARKS:");
+    for (const f of fails) {
+      lines.push(`  [${f.config_name}] task ${f.task_id} — score ${f.score === null || f.score === undefined ? "n/a" : Math.round(f.score * 100) + "%"}`);
+      for (const st of f.steps) {
+        if (st.error) lines.push(`    ${st.role} ERROR: ${st.error}`);
+      }
+      const last = f.steps[f.steps.length - 1];
+      if (last && last._text) lines.push(`    final output: ${last._text.slice(0, 400)}`);
+    }
+  }
+  return lines.join("\n").slice(0, 7000);
+}
+
+async function explainLastRun() {
+  const msg = $("asstMsg");
+  const summary = buildRunSummary();
+  if (!summary) { msg.className = "msg err"; msg.textContent = "Run a sweep first — there is nothing to explain yet."; return; }
+  if (!API_KEY) { msg.className = "msg err"; msg.textContent = "Paste your key first — the assistant spends it, like any other call."; return; }
+  asstSay("you", "Explain the last run.");
+  $("asstExplain").disabled = true;
+  const role = { model: ASSISTANT_MODEL, max_tokens: 1200,
+    system: ASSISTANT_SYSTEM + `
+
+You are being shown RESULTS THAT ARE ALREADY SCORED. Do not re-grade anything and
+do not offer an opinion on whether an answer was correct — that verdict is the
+deterministic scorer's and it has already been made. Explain what the PATTERN
+means: which shape won, whether the suite could actually tell, what the failures
+have in common, and what to change or try next. If the paired test says the
+suite cannot decide, say so plainly rather than picking a winner anyway.
+Reply as JSON: {"reply": "<4-8 sentences, plain text>", "config": null}` };
+  let r;
+  try {
+    r = await callProviderChat(role, [{ role: "user", content: summary }]);
+  } finally { $("asstExplain").disabled = false; }
+  if (!r.ok) { msg.className = "msg err"; msg.textContent = r.error || "the assistant call failed"; return; }
+  const cost = costOf(ASSISTANT_MODEL, r.input_tokens, r.output_tokens);
+  if (cost !== null) asstSpent += cost;
+  $("asstCost").innerHTML = `costs your key · <b>${usd(asstSpent)}</b> spent on the assistant so far`;
+  let parsed = null;
+  try { parsed = JSON.parse((r.text || "").replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch {}
+  asstSay("assistant", (parsed && parsed.reply) || (r.text || "").slice(0, 1500));
+}
+
+$("asstExplain").addEventListener("click", () => { explainLastRun().catch((e) => {
+  $("asstMsg").className = "msg err"; $("asstMsg").textContent = `assistant stopped: ${(e && e.message) || e}`;
+  $("asstExplain").disabled = false;
+}); });
 
 $("asstSend").addEventListener("click", () => { askAssistant().catch((e) => {
   $("asstMsg").className = "msg err"; $("asstMsg").textContent = `assistant stopped: ${(e && e.message) || e}`;
