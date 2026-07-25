@@ -287,12 +287,50 @@ def clear_runs() -> dict:
 # ----------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Text predicates come from gradecore — the same grading engine model-drift and
+# the crash test use — so "one engine" is a shared import rather than three
+# codebases that agree by coincidence. Code EXECUTION stays here on purpose:
+# gradecore is pure (no I/O, no subprocess) and running a candidate is I/O.
+# ---------------------------------------------------------------------------
+try:
+    from gradecore import (GradeInput, contains, exact, number, one_of, regex,
+                           valid_json)
+    _GRADECORE = True
+except ImportError:                                # optional; falls back below
+    _GRADECORE = False
+
+
 class Check(BaseModel):
-    kind: str                      # "contains" | "regex" | "python"
-    pattern: str = ""              # for contains / regex
-    test: str = ""                 # for python: asserts appended after candidate code
+    # text predicates (gradecore): contains | regex | exact | one_of | number | valid_json
+    # execution (local):           python
+    kind: str
+    pattern: str = ""              # contains / regex / exact
+    values: list[str] = []         # one_of
+    value: Optional[float] = None  # number
+    keys: list[str] = []           # valid_json required keys
+    test: str = ""                 # python: asserts appended after candidate code
     weight: float = 1.0
     label: str = ""
+
+
+def _gradecore_verdict(chk: "Check", output: str):
+    """Build the gradecore grader for a text check and run it. None if unsupported."""
+    if not _GRADECORE:
+        return None
+    k = chk.kind
+    if k == "contains":   g = contains(chk.pattern)
+    elif k == "regex":    g = regex(chk.pattern)
+    elif k == "exact":    g = exact(chk.pattern)
+    elif k == "one_of":   g = one_of(*chk.values)
+    elif k == "valid_json": g = valid_json(*chk.keys)
+    elif k == "number":
+        if chk.value is None:
+            return None
+        g = number(chk.value)
+    else:
+        return None
+    return g(GradeInput(text=output))
 
 
 class ScoreRequest(BaseModel):
@@ -373,22 +411,34 @@ def score(req: ScoreRequest, request: Request) -> dict:
     results, got, total = [], 0.0, 0.0
     for chk in req.checks:
         total += chk.weight
-        if chk.kind == "contains":
-            ok, detail = chk.pattern in req.output, ""
-        elif chk.kind == "regex":
-            ok, detail = re.search(chk.pattern, req.output) is not None, ""
-        elif chk.kind == "python":
+        engine = "gradecore"
+        if chk.kind == "python":
             ok, detail = _run_python(code, chk.test)
+            engine = "local-exec"                  # execution is I/O; not gradecore's job
         else:
-            ok, detail = False, f"unknown check kind '{chk.kind}'"
+            v = _gradecore_verdict(chk, req.output)
+            if v is not None:
+                ok, detail = v.passed, v.detail
+            elif chk.kind in ("contains", "regex"):
+                # gradecore absent — same semantics, so a missing optional dep
+                # degrades rather than fails, but say which engine ran.
+                engine = "fallback"
+                ok = (chk.pattern in req.output) if chk.kind == "contains" \
+                     else re.search(chk.pattern, req.output) is not None
+                detail = ""
+            else:
+                ok, detail = False, f"unknown or unsupported check kind '{chk.kind}'"
+                engine = "none"
         if ok:
             got += chk.weight
-        results.append({"label": chk.label or chk.kind, "ok": ok, "detail": detail})
+        results.append({"label": chk.label or chk.kind, "ok": ok,
+                        "detail": detail, "engine": engine})
     return {
         "score": round(got / total, 3) if total else 0.0,
         "passed": sum(1 for r in results if r["ok"]),
         "total": len(results),
         "results": results,
+        "gradecore": _GRADECORE,     # is the shared engine actually in play?
     }
 
 

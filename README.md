@@ -154,6 +154,13 @@ sanitized telemetry). The rest is where the product lives:
   9 times out of 10 show 100% off its one good run. `coding-starter-v2`
   (20 validated tasks) ships in `coding_suite.json`. Grow it toward SWE-bench /
   Terminal-Bench scale. Scoring runs on output text only — never a key.
+- **Grading is shared, not copied.** Text predicates (`contains`, `regex`, `exact`,
+  `one_of`, `number`, `valid_json`) are imported from
+  [gradecore](https://github.com/egnaro9/gradecore) — the same engine model-drift
+  and the crash test grade with, so "one engine" is an import rather than three
+  codebases that agree by coincidence. Every result names the engine that produced
+  it (`gradecore` / `local-exec` / `fallback`). Code **execution** deliberately
+  stays here: gradecore is pure by design, and running a candidate is I/O.
 - **More providers.** Add adapters for OpenAI/Google (both support CORS). A
   provider without CORS can't be called browser-direct without a proxy that would
   touch the key — so your supported list is effectively "the CORS-friendly ones."

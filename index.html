@@ -118,9 +118,12 @@
   <section class="why">
     <h3>What makes these one product and not three demos</h3>
     <ul>
-      <li><b>One grading engine.</b> All three score with the same deterministic predicates
-        (<code>gradecore</code>). A verdict is a function of the output, so it reproduces exactly —
-        rerun it and argue with it.</li>
+      <li><b>One grading engine.</b> All three import the same predicates from
+        <code>gradecore</code> — a shared package, not three codebases that happen to agree. A
+        verdict is a function of the output, so it reproduces exactly; rerun it and argue with it.
+        The one exception is honest: running generated code is I/O, not a pure predicate, so the
+        sweep's <code>python</code> check executes locally and labels itself as such in every
+        result.</li>
       <li><b>One key rule.</b> The browser calls the provider directly with your key. No proxy, no
         server-side storage, no "remember me" checkbox. The backend's ingest endpoint actively
         <em>refuses</em> any payload that looks key-shaped, so even a buggy client can't leak one.</li>

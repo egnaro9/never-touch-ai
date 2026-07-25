@@ -1,2 +1,3 @@
 fastapi>=0.110
+gradecore @ git+https://github.com/egnaro9/gradecore
 uvicorn[standard]
