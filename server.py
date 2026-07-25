@@ -78,7 +78,8 @@ class HarnessConfig(BaseModel):
 
     name: str
     roles: dict[str, RoleSpec]
-    pipeline: list[str]
+    pipeline: list[str] = []                # sugar: a chain. compiles to `graph`
+    graph: dict[str, list[str]] = {}        # role -> the roles feeding it
     substrates: dict[str, Substrate] = {}   # named serving paths this config may use
     runs_per_config: int = Field(default=3, ge=1, le=20)  # repeats for variance
 
@@ -90,6 +91,55 @@ class HarnessConfig(BaseModel):
         if missing:
             raise ValueError(f"pipeline references unknown roles: {missing}")
         return v
+
+    def as_graph(self) -> dict[str, list[str]]:
+        """The topology as a DAG, whichever way it was written.
+
+        `pipeline: [a, b, c]` is the chain {a:[], b:[a], c:[b]} — kept because a
+        chain is the common case and nobody should write a graph to express one.
+        `graph` is the general form, and it is what makes shapes other than a
+        line expressible at all: fan-out to parallel drafters, fan-in to a judge,
+        a critic that sees both the plan and the draft.
+        """
+        if self.graph:
+            return {k: list(v) for k, v in self.graph.items()}
+        return {r: ([self.pipeline[i - 1]] if i else []) for i, r in enumerate(self.pipeline)}
+
+    def order(self) -> list[str]:
+        """Topological order, or a 422 naming the exact problem.
+
+        Refuses cycles rather than looping forever, and refuses edges into roles
+        that do not exist — both are config bugs that would otherwise surface as
+        a confusing runtime failure after you have already paid for calls.
+        """
+        g = self.as_graph()
+        if not g:
+            raise HTTPException(422, "config has no topology: set `pipeline` or `graph`")
+        for node, deps in g.items():
+            if node not in self.roles:
+                raise HTTPException(422, f"graph node '{node}' has no matching role")
+            for d in deps:
+                if d not in g:
+                    raise HTTPException(422, f"'{node}' depends on '{d}', which is not in the graph")
+
+        done: list[str] = []
+        seen: set[str] = set()
+        while len(done) < len(g):
+            ready = [n for n, deps in g.items()
+                     if n not in seen and all(d in seen for d in deps)]
+            if not ready:
+                stuck = sorted(set(g) - seen)
+                raise HTTPException(422, f"graph has a cycle among: {stuck}")
+            ready.sort()                      # deterministic order for reproducibility
+            done.extend(ready)
+            seen.update(ready)
+        return done
+
+    def terminals(self) -> list[str]:
+        """Nodes nothing depends on — the harness's answer comes from here."""
+        g = self.as_graph()
+        fed = {d for deps in g.values() for d in deps}
+        return sorted(n for n in g if n not in fed)
 
 
 class SweepAxis(BaseModel):
@@ -140,13 +190,27 @@ class ConfigSweep(BaseModel):
             for ax, val in zip(self.axes, combo):
 
                 if ax.kind == "topology":
-                    if not isinstance(val, list) or not val:
-                        raise HTTPException(422, "topology axis values must be non-empty pipelines")
-                    missing = [r for r in val if r not in cfg.roles]
-                    if missing:
-                        raise HTTPException(422, f"topology '{val}' references unknown roles: {missing}")
-                    cfg.pipeline = list(val)
-                    label_bits.append("→".join(val))
+                    # A value is either a chain (list of roles) or a shape
+                    # (dict of role -> its inputs). Both describe a topology;
+                    # the dict form is the one that can branch.
+                    if isinstance(val, dict):
+                        if not val:
+                            raise HTTPException(422, "topology graph cannot be empty")
+                        missing = [r for r in val if r not in cfg.roles]
+                        if missing:
+                            raise HTTPException(422, f"topology graph references unknown roles: {missing}")
+                        cfg.graph = {k: list(v) for k, v in val.items()}
+                        cfg.pipeline = []
+                        label_bits.append(_shape_label(cfg))
+                    elif isinstance(val, list) and val:
+                        missing = [r for r in val if r not in cfg.roles]
+                        if missing:
+                            raise HTTPException(422, f"topology '{val}' references unknown roles: {missing}")
+                        cfg.pipeline = list(val)
+                        cfg.graph = {}
+                        label_bits.append("→".join(val))
+                    else:
+                        raise HTTPException(422, "topology values must be a non-empty chain or graph")
 
                 elif ax.kind == "substrate":
                     if val not in cfg.substrates:
@@ -175,6 +239,27 @@ class ConfigSweep(BaseModel):
 def _short(v: Any) -> str:
     s = str(v)
     return s if len(s) <= 24 else s[:21] + "..."
+
+
+def _shape_label(cfg: "HarnessConfig") -> str:
+    """A readable name for a topology, so a leaderboard row says what it ran.
+
+    "planner→[draft_a|draft_b]→judge" beats "config 3".
+    """
+    g = cfg.as_graph()
+    try:
+        order = cfg.order()
+    except HTTPException:
+        return "invalid-graph"
+    levels: list[list[str]] = []
+    placed: set[str] = set()
+    for _ in range(len(order)):
+        tier = [n for n in order if n not in placed and all(d in placed for d in g[n])]
+        if not tier:
+            break
+        levels.append(sorted(tier))
+        placed.update(tier)
+    return "→".join(t[0] if len(t) == 1 else "[" + "|".join(t) + "]" for t in levels)
 
 
 # ----------------------------------------------------------------------------
@@ -287,7 +372,15 @@ _RUNS: dict[str, dict] = {}
 def expand_sweep(sweep: ConfigSweep) -> dict:
     """Turn a sweep into concrete configs. Pure schema work -- no keys, no calls."""
     configs = sweep.expand()
-    return {"count": len(configs), "configs": [c.model_dump() for c in configs]}
+    out = []
+    for c in configs:
+        d = c.model_dump()
+        d["resolved_graph"] = c.as_graph()      # chain or graph, one shape
+        d["order"] = c.order()                  # refuses cycles / dangling edges
+        d["terminals"] = c.terminals()          # where the answer comes from
+        d["shape"] = _shape_label(c)
+        out.append(d)
+    return {"count": len(out), "configs": out}
 
 
 @app.post("/runs")

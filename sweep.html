@@ -272,37 +272,63 @@ const short = (v) => { const s = String(v); return s.length <= 24 ? s : s.slice(
 // ---------------------------------------------------------------------------
 const DEFAULT_CONFIG = {
   base: {
-    name: "manager→worker",
+    name: "harness",
     roles: {
-      manager: {
+      planner: {
         model: "claude-opus-4-8",
         system: "You are a planning manager. Break the task into a short, numbered plan of concrete steps. Do not implement it.",
         max_tokens: 400
       },
-      worker: {
+      draft_a: {
         model: "claude-sonnet-5",
         system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
         max_tokens: 900
+      },
+      // A second drafter on ANOTHER VENDOR. Same tree, different lab — the
+      // substrate carries the wire format, so Claude and GPT can sit side by
+      // side as peers and be judged against each other.
+      draft_b: {
+        model: "gpt-4o-mini",
+        substrate: "openai",
+        system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
+        max_tokens: 900
+      },
+      judge: {
+        model: "claude-opus-4-8",
+        system: "You are given two candidate solutions, each tagged with its author. Choose the better one and return it verbatim — only the final code, no commentary.",
+        max_tokens: 900
       }
     },
-    pipeline: ["manager", "worker"]
+    // The topology is a GRAPH: role -> the roles feeding it. A chain is the
+    // special case; this one fans out to two drafters and fans back into a
+    // judge, which a linear pipeline cannot express at all.
+    graph: {
+      planner: [],
+      draft_a: ["planner"],
+      draft_b: ["planner"],
+      judge:   ["draft_a", "draft_b"]
+    },
+    substrates: {
+      openai: { name: "openai", shape: "openai", base_url: "https://api.openai.com/v1" }
+    }
   },
   // Named serving paths. A model id is not a system: the same id can be served
   // from different endpoints, hardware and point releases, and the response
   // looks identical. Holding the id fixed and varying THIS is how you see it.
-  substrates: {
-    "anthropic-direct": { name: "anthropic-direct", shape: "anthropic", base_url: "" }
-    // add e.g.:
-    // "local-vllm": { name: "local-vllm", shape: "openai", base_url: "http://localhost:8001/v1" }
-  },
   // Three kinds of axis, three different questions:
   //   role      — which model should do this job?
-  //   topology  — do I even need this role? (values are pipelines)
-  //   substrate — is the same model id the same system on another endpoint?
+  //   topology  — what SHAPE should the harness be? values are chains or graphs
+  //   substrate — same model id, different serving path?
+  //
+  // This sweep asks the question a model-only comparison cannot: is a two-vendor
+  // panel with a judge actually worth 4 calls, or does one drafter alone match it?
   axes: [
-    { kind: "role", role: "manager", field: "model", values: ["claude-opus-4-8", "claude-sonnet-5"] },
-    { kind: "topology", values: [["worker"], ["manager", "worker"]] }
-    // { kind: "substrate", role: "*", values: ["anthropic-direct", "local-vllm"] }
+    { kind: "topology", values: [
+      { draft_a: [] },                                              // solo, 1 call
+      { planner: [], draft_a: ["planner"] },                        // chain, 2 calls
+      { planner: [], draft_a: ["planner"], draft_b: ["planner"],    // panel + judge
+        judge: ["draft_a", "draft_b"] }                             // 4 calls, 2 vendors
+    ]}
   ],
   // How to SCORE each config's final output for this task. "python" runs the
   // generated code against these asserts in the backend sandbox (needs backend).
@@ -337,13 +363,27 @@ function expandSweep(base, axes) {
       const kind = ax.kind || "role";
 
       if (kind === "topology") {
-        if (!Array.isArray(value) || !value.length)
-          throw new Error("topology axis values must be non-empty pipelines");
-        const missing = value.filter((r) => !cfg.roles[r]);
-        if (missing.length)
-          throw new Error(`topology [${value}] references unknown roles: ${missing}`);
-        cfg.pipeline = [...value];
-        bits.push(value.join("→"));
+        // A value is a chain (array of roles) or a shape (role -> its inputs).
+        // The object form is the one that can branch.
+        if (value && !Array.isArray(value) && typeof value === "object") {
+          const nodes = Object.keys(value);
+          if (!nodes.length) throw new Error("topology graph cannot be empty");
+          const missing = nodes.filter((r) => !cfg.roles[r]);
+          if (missing.length)
+            throw new Error(`topology graph references unknown roles: ${missing}`);
+          cfg.graph = Object.fromEntries(nodes.map((k) => [k, [...value[k]]]));
+          cfg.pipeline = [];
+          bits.push(shapeLabel(cfg));
+        } else if (Array.isArray(value) && value.length) {
+          const missing = value.filter((r) => !cfg.roles[r]);
+          if (missing.length)
+            throw new Error(`topology [${value}] references unknown roles: ${missing}`);
+          cfg.pipeline = [...value];
+          cfg.graph = {};
+          bits.push(value.join("→"));
+        } else {
+          throw new Error("topology values must be a non-empty chain or graph");
+        }
 
       } else if (kind === "substrate") {
         if (!cfg.substrates || !cfg.substrates[value])
@@ -390,8 +430,18 @@ async function crossCheckSweep(base, axes, mine) {
       diffs.push(`#${i + 1} name: "${mine[i].name}" vs "${theirs[i].name}"`);
     // topology — a differing pipeline means the two sides would run different
     // harnesses under the same label, which is the worst kind of disagreement
-    const mp = (mine[i].pipeline || []).join("→"), tp = (theirs[i].pipeline || []).join("→");
-    if (mp !== tp) diffs.push(`#${i + 1} pipeline: ${mp} vs ${tp}`);
+    // compare the RESOLVED topology: a chain and a graph can describe the same
+    // shape, and it is the shape that has to match, not how it was written
+    // Report the differing EDGES, not just the shape label: two graphs can lay
+    // out into identical tiers and still wire different nodes together, and
+    // "A vs A" is the least useful thing an error can say.
+    const ga = asGraph(mine[i]), gb = asGraph(theirs[i]);
+    for (const node of new Set([...Object.keys(ga), ...Object.keys(gb)])) {
+      const a = (ga[node] || []).slice().sort().join(",");
+      const b = (gb[node] || []).slice().sort().join(",");
+      if (a !== b)
+        diffs.push(`#${i + 1} ${node} inputs: [${a || "task"}] vs [${b || "task"}]`);
+    }
     for (const role of Object.keys(mine[i].roles || {})) {
       const a = mine[i].roles[role], b = (theirs[i].roles || {})[role];
       if (!b) { diffs.push(`#${i + 1} role '${role}' missing on backend`); continue; }
@@ -467,10 +517,52 @@ async function callProvider(role, userContent, substrates) {
 // Run one config once: walk the pipeline, feed each role's output to the next,
 // tally latency/tokens/cost. Returns a SANITIZED record (no key anywhere).
 // ---------------------------------------------------------------------------
+// The topology, however it was written. A `pipeline` is the chain form of a
+// `graph`; the graph form is what can branch — fan out to parallel drafters,
+// fan in to a judge, give a critic both the plan and the draft.
+function asGraph(cfg) {
+  if (cfg.graph && Object.keys(cfg.graph).length)
+    return Object.fromEntries(Object.entries(cfg.graph).map(([k, v]) => [k, [...v]]));
+  const p = cfg.pipeline || [];
+  return Object.fromEntries(p.map((r, i) => [r, i ? [p[i - 1]] : []]));
+}
+
+// Topological order, refusing cycles by name rather than hanging.
+function orderOf(cfg) {
+  const g = asGraph(cfg);
+  if (!Object.keys(g).length) throw new Error("config has no topology: set `pipeline` or `graph`");
+  for (const [n, deps] of Object.entries(g)) {
+    if (!cfg.roles[n]) throw new Error(`graph node '${n}' has no matching role`);
+    for (const d of deps) if (!(d in g)) throw new Error(`'${n}' depends on '${d}', not in the graph`);
+  }
+  const seen = new Set(), out = [];
+  while (out.length < Object.keys(g).length) {
+    const ready = Object.keys(g).filter((n) => !seen.has(n) && g[n].every((d) => seen.has(d))).sort();
+    if (!ready.length) throw new Error(`graph has a cycle among: ${Object.keys(g).filter(n=>!seen.has(n)).sort()}`);
+    ready.forEach((n) => { out.push(n); seen.add(n); });
+  }
+  return out;
+}
+function terminalsOf(cfg) {
+  const g = asGraph(cfg);
+  const fed = new Set(Object.values(g).flat());
+  return Object.keys(g).filter((n) => !fed.has(n)).sort();
+}
+
 async function runConfigOnce(cfg, task, budget) {
   const steps = [];
-  let context = task, total_latency = 0, total_cost = 0, ok = true, unpriced = false;
-  for (const roleName of cfg.pipeline) {
+  const g = asGraph(cfg), order = orderOf(cfg), terminals = terminalsOf(cfg);
+  const outputs = {};                     // role -> its text, fed to dependents
+  let total_latency = 0, total_cost = 0, ok = true, unpriced = false;
+
+  for (const roleName of order) {
+    // A node's input is the task when it has no parents, otherwise its parents'
+    // outputs, each labelled so a judge can tell whose draft is whose.
+    const deps = g[roleName];
+    const context = deps.length
+      ? (deps.length === 1 ? outputs[deps[0]]
+         : deps.map((d) => `<<${d}>>\n${outputs[d]}`).join("\n\n"))
+      : task;
     if (budget.spent >= budget.cap) {
       steps.push({ role: roleName, model: cfg.roles[roleName].model, latency_ms: 0,
         input_tokens: 0, output_tokens: 0, cost_usd: 0, ok: false,
@@ -490,10 +582,33 @@ async function runConfigOnce(cfg, task, budget) {
       output_preview: (r.text || "").slice(0, 280)   // your own content; trim to keep it light
     });
     if (!r.ok) { ok = false; break; }
-    context = r.text;   // this role's output becomes the next role's input
+    outputs[roleName] = r.text;     // available to every node that depends on it
   }
-  return { config_name: cfg.name, task, steps, final_output: context,
+
+  // The answer comes from the terminal node(s) — what nothing else consumes.
+  // With several terminals (a fan-out with no judge) they are concatenated and
+  // labelled, so scoring sees everything the harness actually produced.
+  const finals = terminals.filter((t) => outputs[t] !== undefined);
+  const final_output = finals.length === 1
+    ? outputs[finals[0]]
+    : finals.map((t) => `<<${t}>>\n${outputs[t]}`).join("\n\n");
+
+  return { config_name: cfg.name, task, steps, final_output,
+           shape: shapeLabel(cfg), terminals,
            total_latency_ms: total_latency, total_cost_usd: round6(total_cost), ok, unpriced };
+}
+
+// "planner→[draft_a|draft_b]→judge" — so a leaderboard row says what it ran.
+function shapeLabel(cfg) {
+  let g, order;
+  try { g = asGraph(cfg); order = orderOf(cfg); } catch { return "invalid-graph"; }
+  const placed = new Set(), tiers = [];
+  while (placed.size < order.length) {
+    const tier = order.filter((n) => !placed.has(n) && g[n].every((d) => placed.has(d))).sort();
+    if (!tier.length) break;
+    tiers.push(tier); tier.forEach((n) => placed.add(n));
+  }
+  return tiers.map((t) => (t.length === 1 ? t[0] : "[" + t.join("|") + "]")).join("→");
 }
 
 // ---------------------------------------------------------------------------
@@ -633,10 +748,12 @@ function parseConfig() {
   let obj;
   try { obj = JSON.parse(raw); }
   catch (e) { throw new Error("that config didn't parse as JSON: " + e.message); }
-  if (!obj.base || !obj.base.roles || !obj.base.pipeline)
-    throw new Error("config needs a `base` with `roles` and `pipeline`.");
-  for (const step of obj.base.pipeline)
-    if (!obj.base.roles[step]) throw new Error(`pipeline step '${step}' has no matching role.`);
+  if (!obj.base || !obj.base.roles) throw new Error("config needs a `base` with `roles`.");
+  const hasChain = Array.isArray(obj.base.pipeline) && obj.base.pipeline.length;
+  const hasGraph = obj.base.graph && Object.keys(obj.base.graph).length;
+  if (!hasChain && !hasGraph)
+    throw new Error("config needs a topology: a `pipeline` chain or a `graph`.");
+  orderOf(obj.base);          // validates roles exist and refuses cycles, by name
   return obj;
 }
 
@@ -645,14 +762,19 @@ function updateEstimate() {
     const { base, axes } = parseConfig();
     const configs = expandSweep(base, axes);
     const runs = Math.max(1, parseInt($("runs").value || "1", 10));
-    const steps = base.pipeline.length;
+    // Each config can be a different SHAPE, so node counts differ — a solo
+    // drafter is 1 call and a panel-plus-judge is 4. Summing per config keeps
+    // the estimate honest instead of multiplying by the base's shape.
+    const nodesPer = configs.map((c) => orderOf(c).length);
+    const totalNodes = nodesPer.reduce((a, b) => a + b, 0);
     const suiteMode = $("taskSource").value === "suite";
     const nTasks = suiteMode ? (SUITE ? SUITE.tasks.length : null) : 1;
-    const calls = nTasks === null ? null : configs.length * nTasks * runs * steps;
+    const calls = nTasks === null ? null : totalNodes * nTasks * runs;
+    const shapes = configs.map((c, i) => `${shapeLabel(c)} (${nodesPer[i]})`).join(", ");
     $("estimate").innerHTML =
       `<b>${configs.length}</b> configs × <b>${nTasks === null ? "?" : nTasks}</b> task${nTasks === 1 ? "" : "s"} × ` +
-      `<b>${runs}</b> run${runs === 1 ? "" : "s"} × <b>${steps}</b> steps = ` +
-      `<b>${calls === null ? "?" : calls}</b> API calls, billed to your key`;
+      `<b>${runs}</b> run${runs === 1 ? "" : "s"} = <b>${calls === null ? "?" : calls}</b> API calls, ` +
+      `billed to your key<br><span style="opacity:.75">shapes: ${escapeHtml(shapes)}</span>`;
     $("msg").textContent = "";
   } catch (e) {
     $("estimate").textContent = "—";

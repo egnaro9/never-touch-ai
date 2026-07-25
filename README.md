@@ -113,8 +113,32 @@ A harness has three genuinely different variables, and the sweep can vary each:
 ]
 ```
 
-**Topology** answers "do I even need a manager?" — a question no model-only sweep
-can ask, because the pipeline used to be fixed in `base`.
+**Topology** is a **graph**, not just a chain, so the harness can branch:
+
+```jsonc
+"graph": {
+  "planner": [],                          // no inputs -> gets the task
+  "draft_a": ["planner"],                 // two drafters, in parallel
+  "draft_b": ["planner"],                 //   (draft_b runs on another vendor)
+  "judge":   ["draft_a", "draft_b"]       // fan back in and pick
+}
+```
+
+A node with no inputs receives the task; otherwise it receives its parents'
+outputs, each tagged `<<parent>>` so a judge can tell whose draft is whose. The
+answer comes from the **terminal** nodes — whatever nothing else consumes. Cycles
+and edges into missing roles are refused by name before any call is paid for, and
+`pipeline: [a, b]` still works as sugar for the chain `{a:[], b:[a]}`.
+
+Because each role carries its own `substrate`, one branch can be Claude and
+another GPT — a **cross-vendor panel judged by a third model** is just a shape:
+
+    solo:  draft_a                            1 call
+    chain: planner→draft_a                    2 calls
+    panel: planner→[draft_a|draft_b]→judge    4 calls, 2 vendors
+
+Sweeping those three answers the question a model-only comparison cannot ask: is
+the panel worth 4× the calls, or does one drafter match it?
 
 **Substrate** is the one most tools ignore. A model id is not a system: the same
 id can be served from different endpoints, hardware, quantizations and point
