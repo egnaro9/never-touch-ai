@@ -10,6 +10,31 @@ read and extended.
 
 ---
 
+## The first real result
+
+![More scaffolding scored worse, for 22x the cost](docs/img/sweep-result-cover.png)
+
+Twenty coding tasks, three harness shapes, real models, $0.99, zero errors across
+sixty runs:
+
+| harness | calls/task | score | cost | mean latency |
+|---|---|---|---|---|
+| one drafter | 1 | **95%** | $0.031 | 2.2s |
+| planner → drafter | 2 | 90% | $0.264 | 9.1s |
+| planner → 2 drafters → judge | 4 | **80%** | $0.692 | 18.3s |
+
+The four-call panel beat the single drafter on **zero** of twenty tasks. And the
+tool refused to let that be called a win for the single drafter — seventeen ties
+leave three informative tasks, which cannot reach p<0.05 even if one side sweeps
+them, so it reports *"this suite cannot decide."*
+
+- Raw result, from which every number above is computed:
+  [`results/sweep_2026-07-25.json`](results/sweep_2026-07-25.json)
+- The write-up: [**field note — the first real sweep, and why it refused to call a
+  winner**](docs/field-note-first-result.md)
+
+---
+
 ## How "never touch" is actually enforced
 
 The name is a promise, so every layer is built to keep it literally true:
