@@ -154,6 +154,10 @@
                 color: var(--faint); font-size: .72rem; }
   .fold .fbody { padding: 0 1.05rem 1rem; }
   .fold .fnote { font-size: .78rem; color: var(--muted); margin: 0 0 .5rem; }
+  /* A fold inside a fold reads as a subordinate, not a peer. */
+  .subfold { margin: 0; background: var(--paper); }
+  .subfold > summary { padding: .5rem .7rem; font-size: .7rem; }
+  .subfold .fbody { padding: 0 .7rem .7rem; }
   .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
   .cfgbtn { font-family: var(--mono); font-size: .72rem; padding: .28rem .6rem;
             border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
@@ -517,7 +521,14 @@
               <button type="button" class="cfgbtn" id="cfgSave">save this harness</button>
               <span class="cfgnote">a harness IS this JSON — keep it in your repo and load it here</span>
             </div>
-            <textarea id="config" spellcheck="false"></textarea>
+            <!-- The JSON gets its own fold inside this one, so you can reach
+                 load/save without the code being on screen. -->
+            <details class="fold subfold" id="jsonFold">
+              <summary>JSON <span class="fsub" id="jsonFoldSub">&mdash;</span></summary>
+              <div class="fbody">
+                <textarea id="config" spellcheck="false"></textarea>
+              </div>
+            </details>
           </div>
         </details>
 
@@ -1384,6 +1395,22 @@ function parseConfig() {
   return obj;
 }
 
+// The JSON fold's summary carries the shape and size of what it contains, so
+// there is a reason to leave it closed.
+function updateJsonFoldSummary() {
+  const el = $("jsonFoldSub");
+  if (!el) return;
+  try {
+    const { base, axes } = parseConfig();
+    const configs = expandSweep(base, axes);
+    const roles = Object.keys(base.roles || {}).length;
+    el.textContent = `${roles} role${roles === 1 ? "" : "s"} · ` +
+      `${configs.length} config${configs.length === 1 ? "" : "s"} · ${shapeLabel(configs[0])}`;
+  } catch (e) {
+    el.textContent = "does not parse";
+  }
+}
+
 function updateEstimate() {
   try {
     const { base, axes } = parseConfig();
@@ -1414,6 +1441,7 @@ function updateEstimate() {
   }
 }
 ["config", "runs"].forEach((id) => $(id).addEventListener("input", updateEstimate));
+$("config").addEventListener("input", updateJsonFoldSummary);
 // The bar must show a slot for every substrate the CURRENT config names.
 $("config").addEventListener("input", renderSubstrateKeys);
 $("config").addEventListener("input", refreshVerifyHosts);
@@ -2393,6 +2421,7 @@ $("cfgSave").addEventListener("click", () => {
 })();
 
 updateEstimate();
+updateJsonFoldSummary();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
 refreshVerifyHosts();
 renderPad();
