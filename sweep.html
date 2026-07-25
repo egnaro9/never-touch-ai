@@ -244,21 +244,64 @@ $("keyForget").addEventListener("click", () => {
 window.addEventListener("beforeunload", () => { API_KEY = null; });
 
 // ---------------------------------------------------------------------------
-// Pricing — USD per 1,000,000 tokens. Verify at https://claude.com/pricing
-// (subject to change). Sonnet 5 has $2/$10 intro pricing through 2026-08-31;
-// standard $3/$15 shown here so estimates stay correct afterward.
+// Pricing — USD per 1,000,000 tokens.
+// Verified against platform.claude.com/docs/en/about-claude/pricing on the date
+// below. That date is shown in the UI: a price table with no "as of" is a claim
+// with no expiry, and this one WILL go stale.
+//
+// A price is either a constant or a dated schedule. Sonnet 5 is the reason the
+// schedule exists — it runs $2/$10 introductory through 2026-08-31 and $3/$15
+// after, so any single constant is wrong on one side of that date. This file
+// previously hardcoded the post-intro $3/$15 and overstated Sonnet 5 by 50%.
 // ---------------------------------------------------------------------------
+const PRICING_VERIFIED = "2026-07-24";
+const PRICING_SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing";
 const PRICING = {
-  "claude-opus-4-8":           { in: 5,  out: 25 },
-  "claude-sonnet-5":           { in: 3,  out: 15 },
-  "claude-haiku-4-5-20251001": { in: 1,  out: 5  },
-  "claude-fable-5":            { in: 10, out: 50 },
+  "claude-fable-5":    { in: 10, out: 50 },
+  "claude-opus-5":     { in: 5,  out: 25 },
+  "claude-opus-4-8":   { in: 5,  out: 25 },
+  "claude-opus-4-7":   { in: 5,  out: 25 },
+  "claude-opus-4-6":   { in: 5,  out: 25 },
+  "claude-sonnet-5":   [{ until: "2026-08-31", in: 2, out: 10 }, { in: 3, out: 15 }],
+  "claude-sonnet-4-6": { in: 3,  out: 15 },
+  "claude-haiku-4-5":  { in: 1,  out: 5  },
+
+  // OpenAI, standard tier — verified against developers.openai.com/api/docs/pricing
+  // on the same date. Cross-vendor comparison is the point of the substrate axis,
+  // and it is worth nothing if one vendor's column reads "cost unknown".
+  // gpt-4o-mini is deliberately absent: it no longer appears on that page, and a
+  // remembered price for a delisted model is exactly the kind of number this tool
+  // refuses to invent.
+  "gpt-5.6-sol":       { in: 5,    out: 30   },
+  "gpt-5.6-terra":     { in: 2.5,  out: 15   },
+  "gpt-5.6-luna":      { in: 1,    out: 6    },
+  "gpt-5.5":           { in: 5,    out: 30   },
+  "gpt-5.4":           { in: 2.5,  out: 15   },
+  "gpt-5.4-mini":      { in: 0.75, out: 4.5  },
+  "gpt-5.4-nano":      { in: 0.2,  out: 1.25 },
 };
+
+// Model ids ship in dated and undated forms — claude-haiku-4-5-20251001 and
+// claude-haiku-4-5 are the same model at the same price. Key the table on the
+// undated form and strip the suffix on lookup, so a real model never falls into
+// the "cost unknown" bucket over a naming detail.
+const baseModelId = (m) => String(m).replace(/-\d{8}$/, "");
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Resolves the rate card in effect on `when` (default: today).
+function priceFor(model, when) {
+  const p = PRICING[baseModelId(model)];
+  if (!p) return null;
+  if (!Array.isArray(p)) return p;
+  const day = when || todayISO();
+  return p.find((tier) => !tier.until || day <= tier.until) || p[p.length - 1];
+}
+
 // Returns null for an unpriced model rather than 0. Returning 0 made an unknown
 // model look free, which then won the "cheapest" pill and could top a leaderboard
 // sorted by cost — a made-up number beating a measured one.
-function costOf(model, inTok, outTok) {
-  const p = PRICING[model];
+function costOf(model, inTok, outTok, when) {
+  const p = priceFor(model, when);
   if (!p) return null;
   return (inTok / 1e6) * p.in + (outTok / 1e6) * p.out;
 }
@@ -288,7 +331,7 @@ const DEFAULT_CONFIG = {
       // substrate carries the wire format, so Claude and GPT can sit side by
       // side as peers and be judged against each other.
       draft_b: {
-        model: "gpt-4o-mini",
+        model: "gpt-5.4-mini",
         substrate: "openai",
         system: "You are an implementer. Given a plan, produce the final, complete answer or code.",
         max_tokens: 900
@@ -806,7 +849,11 @@ function updateEstimate() {
     $("estimate").innerHTML =
       `<b>${configs.length}</b> configs × <b>${nTasks === null ? "?" : nTasks}</b> task${nTasks === 1 ? "" : "s"} × ` +
       `<b>${runs}</b> run${runs === 1 ? "" : "s"} = <b>${calls === null ? "?" : calls}</b> API calls, ` +
-      `billed to your key<br><span style="opacity:.75">shapes: ${escapeHtml(shapes)}</span>`;
+      `billed to your key<br><span style="opacity:.75">shapes: ${escapeHtml(shapes)}</span>` +
+      // A rate card with no "as of" is a claim with no expiry. Show the date it
+      // was verified so a stale table is visible rather than merely wrong.
+      `<br><span style="opacity:.6">prices verified ${PRICING_VERIFIED} · ` +
+      `<a href="${PRICING_SOURCE}" style="color:inherit">source</a></span>`;
     $("msg").textContent = "";
   } catch (e) {
     $("estimate").textContent = "—";
