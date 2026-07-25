@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Harness Config Tool — AI Crash Test</title>
+<title>Harness Builder — Proof Ground</title>
 <style>
   /* ---- tokens ----------------------------------------------------------
      Same palette as the landing page and the portfolio: dark-first, amber
@@ -185,7 +185,7 @@
 
   <div class="wrap">
     <header class="mast">
-      <h1>Harness <span class="never">Config Tool</span></h1>
+      <h1>Harness <span class="never">Builder</span></h1>
       <p style="margin:.3rem 0 0"><a href="./index.html" style="font-family:var(--mono);font-size:.8rem;color:var(--accent);text-decoration:none">&larr; all three tools</a></p>
       <p>Test and compare AI harness configurations — models, scaffolding, and roles —
          using your own API key. The key stays in this browser tab, in memory only.
@@ -445,7 +445,7 @@ function expandSweep(base, axes) {
   for (const ax of axes) {
     combos = combos.flatMap((c) => ax.values.map((v) => [...c, { ax, value: v }]));
   }
-  return combos.map((combo) => {
+  return combos.map((combo, comboIdx) => {
     const cfg = structuredClone(base);
     const bits = [];
     for (const { ax, value } of combo) {
@@ -490,6 +490,22 @@ function expandSweep(base, axes) {
         bits.push(`${ax.role}.${ax.field}=${short(value)}`);
       }
     }
+    // Validate what the AXES produced, not only what the user typed. parseConfig
+    // checks `base`; it never sees a topology axis value. And the topology branch
+    // above only checks that graph KEYS resolve to roles — a parent naming a node
+    // that is not in the graph sailed through here and then threw much later, from
+    // runSweep's pre-flight, where nothing catches it: the user clicked Run and got
+    // silence. Refuse here instead, by name, with the axis label attached.
+    // Name it by POSITION, not by label: shapeLabel returns the string
+    // "invalid-graph" for anything broken, so labelling the error with it told
+    // you only that something was wrong, never which axis value to go fix.
+    try { orderOf(cfg); }
+    catch (e) {
+      throw new Error(`config #${comboIdx + 1} of ${combos.length} ` +
+        `(${combo.map(({ ax, value }) => `${ax.kind || "role"}=${short(value)}`).join(", ")}) ` +
+        `is not valid: ${e.message}`);
+    }
+
     cfg.name = `${base.name} [${bits.join(", ")}]`;
     return cfg;
   });
@@ -1080,7 +1096,20 @@ async function runSweep() {
         : `spent ~${usd(budget.spent)}.`);
   }
 }
-$("runBtn").addEventListener("click", runSweep);
+// runSweep is async, and handing it straight to addEventListener drops the
+// promise on the floor: anything it threw became an unhandled rejection with
+// nothing on screen — click Run, get silence, no error, no clue. A tool whose
+// whole pitch is reporting failure honestly must not fail silently about itself.
+// Every throw now lands in the message line and restores the button.
+$("runBtn").addEventListener("click", () => {
+  runSweep().catch((e) => {
+    const msg = $("msg");
+    msg.className = "msg err";
+    msg.textContent = `Sweep stopped: ${(e && e.message) || e}`;
+    $("runBtn").disabled = false;
+    $("runBtn").textContent = "Run sweep";
+  });
+});
 
 // task source toggle: show/hide the single-task field, load the suite, re-estimate
 $("taskSource").addEventListener("change", async () => {

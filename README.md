@@ -1,4 +1,4 @@
-# AI Crash Test — skeleton
+# Proof Ground — skeleton
 
 A hosted BYOK tool for testing and comparing AI harness configurations: different
 models bound to different roles, with different scaffolding, run against the same
