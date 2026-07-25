@@ -197,9 +197,97 @@ function expandSweep(base, axes) {
   });
 }
 
+// ===========================================================================
+// PAIRED COMPARISON — is one harness actually better, or is that one task?
+//
+// A 20-task suite moves in 5-point steps, so "85% vs 80%" is a single task and
+// comparing two independent means at that sample size mostly measures noise.
+// Both harnesses run the SAME tasks, so the far more sensitive question is
+// per-task: on how many tasks did A beat B, and could that split have come from
+// a coin?
+//
+// The sign test is the honest tool here. It assumes almost nothing — no
+// normality, no equal variance, no interval scale — only that under the null
+// each disagreement is equally likely to fall either way. Ties carry no
+// information about direction and are excluded, which is the standard treatment
+// and also why a 20-task suite can end up with very few informative tasks.
+// ===========================================================================
+
+function choose(n, k) {
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let r = 1;
+  for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i;
+  return r;
+}
+
+// Two-sided exact sign test. Returns the probability of a split at least this
+// lopsided arising by chance from a fair coin.
+function signTestP(wins, losses) {
+  const n = wins + losses;
+  if (n === 0) return 1;
+  const hi = Math.max(wins, losses);
+  let tail = 0;
+  for (let k = hi; k <= n; k++) tail += choose(n, k);
+  return Math.min(1, (2 * tail) / Math.pow(2, n));
+}
+
+// scoresA / scoresB: { taskId: score }. Only tasks present in BOTH count — a
+// task one config never ran tells you nothing about which is better.
+function pairedCompare(scoresA, scoresB, opts) {
+  const eps = (opts && opts.eps) != null ? opts.eps : 1e-9;
+  const alpha = (opts && opts.alpha) != null ? opts.alpha : 0.05;
+  const shared = Object.keys(scoresA).filter((t) => t in scoresB).sort();
+  let wins = 0, losses = 0, ties = 0;
+  const detail = [];
+  for (const t of shared) {
+    const d = scoresA[t] - scoresB[t];
+    if (Math.abs(d) <= eps) { ties++; detail.push({ task: t, winner: null, delta: 0 }); }
+    else if (d > 0) { wins++; detail.push({ task: t, winner: "a", delta: d }); }
+    else { losses++; detail.push({ task: t, winner: "b", delta: d }); }
+  }
+  const p = signTestP(wins, losses);
+  const decisive = p < alpha;
+  return {
+    shared: shared.length, wins, losses, ties,
+    informative: wins + losses,
+    p,
+    decisive,
+    winner: decisive ? (wins > losses ? "a" : "b") : null,
+    detail,
+    // The number that keeps this honest: with this many informative tasks, the
+    // most lopsided possible split. If even a clean sweep cannot clear alpha,
+    // the suite CANNOT answer the question and saying "no difference" would be
+    // a claim the data cannot support.
+    minP: signTestP(wins + losses, 0),
+    underpowered: signTestP(wins + losses, 0) >= alpha,
+  };
+}
+
+// Plain-language reading. Refuses to call a tie a tie when the suite was never
+// capable of detecting a difference in the first place.
+function pairedVerdict(r, nameA, nameB) {
+  const a = nameA || "A", b = nameB || "B";
+  if (r.shared === 0) return "No task was scored under both configs, so there is nothing to compare.";
+  if (r.informative === 0)
+    return `${a} and ${b} scored identically on all ${r.shared} shared tasks — no task separates them.`;
+  if (r.underpowered)
+    return `Only ${r.informative} task${r.informative === 1 ? "" : "s"} separated ${a} and ${b}. ` +
+           `Even a clean sweep of ${r.informative} could not clear p<0.05, so this suite cannot ` +
+           `decide between them — that is a limit of the suite, not a finding about the harnesses.`;
+  if (!r.decisive)
+    return `${a} won ${r.wins}, ${b} won ${r.losses}, ${r.ties} tied (p=${r.p.toFixed(3)}). ` +
+           `Indistinguishable on this suite.`;
+  const win = r.winner === "a" ? a : b;
+  const hi = Math.max(r.wins, r.losses), lo = Math.min(r.wins, r.losses);
+  return `${win} is better: won ${hi}, lost ${lo}, ${r.ties} tied (p=${r.p.toFixed(3)}).`;
+}
+
+
 return {
   PRICING, PRICING_VERIFIED, PRICING_SOURCE,
   baseModelId, todayISO, priceFor, costOf, round6, usd, short,
   asGraph, orderOf, terminalsOf, shapeLabel, expandSweep,
+  choose, signTestP, pairedCompare, pairedVerdict,
 };
 });

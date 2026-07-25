@@ -190,3 +190,88 @@ test("expansion does not mutate the base config", () => {
   expandSweep(base, [{ kind: "role", role: "a", field: "model", values: ["m1", "m2"] }]);
   assert.equal(JSON.stringify(base), snapshot);
 });
+
+// ---------------------------------------------------------------------------
+// PAIRED COMPARISON
+// ---------------------------------------------------------------------------
+const { signTestP, pairedCompare, pairedVerdict } = core;
+
+test("the sign test matches exact binomial values", () => {
+  // Hand-checkable: a clean sweep of 5 is 2 * (1/32) = 0.0625, which does NOT
+  // clear p<0.05. Winning every informative task can still prove nothing.
+  assert.equal(signTestP(0, 0), 1);
+  assert.ok(Math.abs(signTestP(5, 0) - 0.0625) < 1e-9);
+  assert.ok(Math.abs(signTestP(6, 0) - 0.03125) < 1e-9);
+  assert.equal(signTestP(10, 10), 1);
+  assert.equal(signTestP(3, 2), signTestP(2, 3), "direction must not change the p-value");
+});
+
+test("only tasks scored under BOTH configs count", () => {
+  const r = pairedCompare({ t1: 1, t2: 1, t3: 0 }, { t1: 0, t2: 1, t9: 1 });
+  assert.equal(r.shared, 2, "t3 and t9 ran under one config only");
+  assert.equal(r.wins, 1);
+  assert.equal(r.ties, 1);
+});
+
+test("ties are excluded from the test, not counted as evidence", () => {
+  // 18 identical tasks and 2 wins is not 20 tasks of evidence; it is 2.
+  const a = {}, b = {};
+  for (let i = 0; i < 18; i++) { a["t" + i] = 1; b["t" + i] = 1; }
+  a.w1 = 1; b.w1 = 0; a.w2 = 1; b.w2 = 0;
+  const r = pairedCompare(a, b);
+  assert.equal(r.shared, 20);
+  assert.equal(r.ties, 18);
+  assert.equal(r.informative, 2);
+  assert.ok(Math.abs(r.p - 0.5) < 1e-9, "two wins out of two is a coin flip away");
+  assert.equal(r.decisive, false);
+});
+
+test("a lopsided split is called, and names the winner", () => {
+  const a = {}, b = {};
+  for (let i = 0; i < 8; i++) { a["t" + i] = 1; b["t" + i] = 0; }
+  a.x = 0; b.x = 1;
+  const r = pairedCompare(a, b);
+  assert.equal(r.wins, 8); assert.equal(r.losses, 1);
+  assert.ok(r.p < 0.05);
+  assert.equal(r.decisive, true);
+  assert.equal(r.winner, "a");
+  assert.match(pairedVerdict(r, "panel", "chain"), /panel is better/);
+});
+
+test("an underpowered comparison says so instead of claiming a tie", () => {
+  // THE point of this feature. 3 informative tasks cannot clear p<0.05 even if
+  // one config sweeps all three, so "no significant difference" would be a
+  // finding the data cannot support.
+  const r = pairedCompare({ t1: 1, t2: 1, t3: 1 }, { t1: 0, t2: 0, t3: 0 });
+  assert.equal(r.wins, 3);
+  assert.ok(r.p >= 0.05, "a sweep of 3 is p=0.25");
+  assert.equal(r.underpowered, true);
+  assert.equal(r.decisive, false);
+  const v = pairedVerdict(r, "panel", "chain");
+  assert.match(v, /cannot decide/);
+  assert.match(v, /limit of the suite/);
+  assert.doesNotMatch(v, /[Ii]ndistinguishable/, "never report a tie the suite could not have detected");
+});
+
+test("a genuine tie across a well-powered suite reads as indistinguishable", () => {
+  const a = {}, b = {};
+  for (let i = 0; i < 10; i++) { a["w" + i] = 1; b["w" + i] = 0; }
+  for (let i = 0; i < 10; i++) { a["l" + i] = 0; b["l" + i] = 1; }
+  const r = pairedCompare(a, b);
+  assert.equal(r.informative, 20);
+  assert.equal(r.underpowered, false, "20 informative tasks CAN detect a difference");
+  assert.equal(r.decisive, false);
+  assert.match(pairedVerdict(r, "panel", "chain"), /Indistinguishable/);
+});
+
+test("no shared tasks is reported as nothing to compare, not as a tie", () => {
+  const r = pairedCompare({ t1: 1 }, { t2: 1 });
+  assert.equal(r.shared, 0);
+  assert.match(pairedVerdict(r), /nothing to compare/);
+});
+
+test("partial credit is compared, not just pass/fail", () => {
+  const r = pairedCompare({ t1: 0.75 }, { t1: 0.5 });
+  assert.equal(r.wins, 1);
+  assert.equal(r.detail[0].winner, "a");
+});

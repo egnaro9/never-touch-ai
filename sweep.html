@@ -204,6 +204,14 @@
   .mx-fail { background: rgba(248,113,113,.13); color: var(--error); }
 
   .empty { color: var(--muted); font-family: var(--mono); font-size: .82rem; padding: .5rem 0; }
+  .paired { margin-top: 1.1rem; }
+  .paired h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 700; }
+  .pair { border-left: 2px solid var(--line); padding: .35rem 0 .35rem .7rem; margin: .45rem 0;
+          font-family: var(--mono); font-size: .76rem; color: var(--muted); }
+  .pair.decisive { border-left-color: var(--armed); }
+  .pair.weak     { border-left-color: var(--warn); }
+  .pair b { color: var(--ink); }
+  .pair .tally { color: var(--faint); }
 
   .log { font-family: var(--mono); font-size: .76rem; margin-top: 1rem; max-height: 320px; overflow: auto; }
   .log .line { padding: .28rem 0; border-bottom: 1px dashed var(--line); color: var(--muted); }
@@ -306,6 +314,7 @@
           <h2>Comparison</h2>
           <div id="results"><div class="empty">No runs yet. Paste your key, set a config, then run a sweep.</div></div>
           <div id="matrix"></div>
+          <div id="paired"></div>
           <div class="log" id="log"></div>
           <div class="backend" id="backend">Backend: <span id="backendState">not checked</span>
             · <input class="txt" id="backendUrl" style="width:210px;display:inline-block;padding:.2rem .4rem"
@@ -854,6 +863,41 @@ function renderResults() {
   $("results").innerHTML = html + "</tbody></table>";
 }
 
+// Every pair of configs, compared task by task. Two independent means over 20
+// tasks mostly measure noise — the suite moves in 5-point steps, so "85 vs 80"
+// is one task. Both configs ran the SAME tasks, so per-task wins/losses is the
+// question the data can actually answer.
+function renderPaired() {
+  const cont = $("paired");
+  if (CONFIG_ORDER.length < 2 || !matrix.size) { cont.innerHTML = ""; return; }
+  const scoresFor = (cname) => {
+    const row = matrix.get(cname);
+    if (!row) return {};
+    const out = {};
+    for (const [tid, cell] of row) out[tid] = cell.sum / cell.n;
+    return out;
+  };
+  const rows = [];
+  for (let i = 0; i < CONFIG_ORDER.length; i++) {
+    for (let j = i + 1; j < CONFIG_ORDER.length; j++) {
+      const A = CONFIG_ORDER[i], B = CONFIG_ORDER[j];
+      const r = pairedCompare(scoresFor(A), scoresFor(B));
+      if (!r.shared) continue;
+      rows.push({ A, B, i, j, r });
+    }
+  }
+  if (!rows.length) { cont.innerHTML = ""; return; }
+  let html = '<div class="paired"><h3>Paired comparison — is the difference real?</h3>';
+  for (const { A, B, i, j, r } of rows) {
+    const cls = r.decisive ? "decisive" : (r.underpowered ? "weak" : "");
+    html += `<div class="pair ${cls}"><b>#${i + 1} vs #${j + 1}</b> — ` +
+            escapeHtml(pairedVerdict(r, `#${i + 1}`, `#${j + 1}`)) +
+            ` <span class="tally">[${r.shared} shared · ${r.informative} informative]</span></div>`;
+  }
+  html += '</div>';
+  cont.innerHTML = html;
+}
+
 function renderMatrix() {
   const cont = $("matrix");
   if (TASK_ORDER.length <= 1 || !matrix.size) { cont.innerHTML = ""; return; }  // only useful for a suite
@@ -1044,7 +1088,7 @@ async function runSweep() {
   agg.clear(); matrix.clear();
   CONFIG_ORDER = configs.map((c) => c.name);
   TASK_ORDER = tasks.map((t) => t.id);
-  $("log").innerHTML = ""; renderResults(); renderMatrix();
+  $("log").innerHTML = ""; renderResults(); renderMatrix(); renderPaired();
   await checkBackend();
 
   // Differential check: the browser and the backend expand the same sweep.
@@ -1118,7 +1162,7 @@ async function runSweep() {
           (stored ? " · stored" : (backendUp ? "" : " · local only")),
           !rec.ok
         );
-        renderResults(); renderMatrix();
+        renderResults(); renderMatrix(); renderPaired();
       }
     }
   }
