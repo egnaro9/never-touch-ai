@@ -158,12 +158,17 @@
      outer fold's border, which made it look like a separate box sitting inside
      the panel. It shares the panel's surface now — one continuous card, with
      only the code area itself a darker shade. */
-  .subfold {
-    margin: 0; background: var(--card); border: 0;
+  /* `.card, .fold, .verify { margin: 0 0 1rem }` is declared later and has the
+     same specificity, so a bare `.subfold` margin lost to it silently. Scoped
+     to its parent so it actually applies. */
+  .fbody > .subfold {
+    /* 8px of air above the divider and 41 below the code box read as the whole
+       group sitting too high. The slack was all underneath. */
+    margin: 1.1rem 0 0; background: var(--card); border: 0;
     border-top: 1px solid var(--line); border-radius: 0;
   }
-  .subfold > summary { padding: .5rem 0; font-size: .7rem; }
-  .subfold .fbody { padding: 0 0 .2rem; }
+  .fbody > .subfold > summary { padding: .7rem 0 .55rem; font-size: .7rem; }
+  .fbody > .subfold .fbody { padding: 0; }
   .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
   .cfgbtn { font-family: var(--mono); font-size: .72rem; padding: .28rem .6rem;
             border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
