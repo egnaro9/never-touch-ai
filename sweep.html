@@ -462,11 +462,33 @@ async function crossCheckSweep(base, axes, mine) {
 // with the user's own key, direct to Anthropic. No proxy. The opt-in header
 // is what makes the browser-direct call allowed.
 // ---------------------------------------------------------------------------
-async function callProvider(role, userContent, substrates) {
+// A substrate with shape "mock" answers locally: no key, no network, no cost.
+// It exists so the topology itself can be exercised — fan-out, tagging, fan-in,
+// terminal selection — without spending anything. It echoes what it received,
+// which is what makes it useful as a test: you can SEE what each node was fed.
+//
+// `deps` comes from the graph, not from sniffing the text for <<tags>>: a node
+// with a single parent is fed that parent's output UNTAGGED, so reading inputs
+// out of the content reported a one-parent node as though it had been handed the
+// raw task — precisely the wiring question the mock exists to answer.
+function callMock(role, userContent, deps) {
+  const from = deps && deps.length ? deps.join("+") : "task";
+  return {
+    ok: true, latency_ms: 1,
+    mock: true,
+    text: `[mock ${role.model}] inputs=${from} chars=${userContent.length}`,
+    input_tokens: Math.ceil(userContent.length / 4),
+    output_tokens: 12
+  };
+}
+
+async function callProvider(role, userContent, substrates, deps) {
   // WHERE this role runs. Same model id can be served from different endpoints;
   // holding the id fixed and varying this is the only way to see the difference.
   const sub = (role.substrate && substrates && substrates[role.substrate]) || null;
   const shape = sub ? (sub.shape || "anthropic") : "anthropic";
+  if (shape === "mock") return callMock(role, userContent, deps);
+
   const url = shape === "openai"
     ? ((sub && sub.base_url) || "https://api.openai.com/v1") + "/chat/completions"
     : ((sub && sub.base_url) || "https://api.anthropic.com") + "/v1/messages";
@@ -570,10 +592,15 @@ async function runConfigOnce(cfg, task, budget) {
       ok = false; break;
     }
     const role = cfg.roles[roleName];
-    const r = await callProvider(role, context, cfg.substrates);
-    const cost = costOf(role.model, r.input_tokens, r.output_tokens);
-    if (cost === null) unpriced = true;                 // surfaced, not silently zeroed
-    budget.spent += (cost || 0); total_latency += r.latency_ms; total_cost += (cost || 0);
+    const r = await callProvider(role, context, cfg.substrates, deps);
+    const priced = costOf(role.model, r.input_tokens, r.output_tokens);
+    if (priced === null) unpriced = true;               // surfaced, not silently zeroed
+    // A mock answered locally — no request left the tab, so no money was spent.
+    // Keep what it WOULD have cost (pricing a topology before running it is half
+    // the point) but never let it count as spend.
+    const cost = r.mock ? 0 : (priced || 0);
+    if (r.mock) budget.hypothetical += (priced || 0);
+    budget.spent += cost; total_latency += r.latency_ms; total_cost += cost;
     steps.push({
       role: roleName, model: role.model, substrate: role.substrate || "default",
       latency_ms: r.latency_ms,
@@ -749,6 +776,11 @@ function parseConfig() {
   try { obj = JSON.parse(raw); }
   catch (e) { throw new Error("that config didn't parse as JSON: " + e.message); }
   if (!obj.base || !obj.base.roles) throw new Error("config needs a `base` with `roles`.");
+  // The backend requires a name (it's how a config is labelled in every result
+  // row and how the cross-check pairs the two expansions). Refuse it here too,
+  // rather than letting a nameless config reach the renderer as `undefined`.
+  if (typeof obj.base.name !== "string" || !obj.base.name.trim())
+    throw new Error("config needs a `base.name` — it labels every result row.");
   const hasChain = Array.isArray(obj.base.pipeline) && obj.base.pipeline.length;
   const hasGraph = obj.base.graph && Object.keys(obj.base.graph).length;
   if (!hasChain && !hasGraph)
@@ -794,24 +826,41 @@ $("backendUrl").addEventListener("change", checkBackend);
 
 async function runSweep() {
   const msg = $("msg");
-  if (!API_KEY) { msg.className = "msg err"; msg.textContent = "Paste your Anthropic key first — it stays in this tab."; return; }
 
-  let cfg;
-  try { cfg = parseConfig(); }
-  catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
-
-  let configs, tasks;
+  // Validate the config BEFORE the key gate. Checking the key first made every
+  // config error — a typo, a missing name — surface as "paste your key", which
+  // sends you looking in exactly the wrong place.
+  let cfg, configs;
   try {
+    cfg = parseConfig();
     configs = expandSweep(cfg.base, cfg.axes);
-    tasks = await getTasks(cfg);
   } catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
+
+  // A sweep whose every role sits on a mock substrate needs no key: nothing
+  // leaves the tab. That is how the topology can be exercised for free.
+  const subs = cfg.base.substrates || {};
+  const allMock = configs.every((c) =>
+    orderOf(c).every((n) => {
+      const sn = c.roles[n].substrate;
+      return sn && subs[sn] && subs[sn].shape === "mock";
+    }));
+  if (!API_KEY && !allMock) {
+    msg.className = "msg err";
+    msg.textContent = "Paste your Anthropic key first — it stays in this tab.";
+    return;
+  }
+
+  let tasks;
+  try { tasks = await getTasks(cfg); }
+  catch (e) { msg.className = "msg err"; msg.textContent = e.message; return; }
   if (!tasks.length) { msg.className = "msg err"; msg.textContent = "No tasks to run."; return; }
 
   const runs = Math.max(1, parseInt($("runs").value || "1", 10));
   // A cap of 0 must mean "spend nothing", not "no cap". `0 || Infinity` gave
   // Infinity — the one input where a falsy-coalesce bug costs real money.
   const rawCap = parseFloat($("budget").value);
-  const budget = { cap: Number.isFinite(rawCap) && rawCap >= 0 ? rawCap : Infinity, spent: 0 };
+  const budget = { cap: Number.isFinite(rawCap) && rawCap >= 0 ? rawCap : Infinity,
+                   spent: 0, hypothetical: 0 };
   if (budget.cap === 0) { msg.className = "msg warn"; msg.textContent = "Spend cap is $0.00 — nothing will run. Raise the cap."; return; }
 
   agg.clear(); matrix.clear();
@@ -899,7 +948,18 @@ async function runSweep() {
   $("runBtn").disabled = false; $("runBtn").textContent = "Run sweep";
   const nt = tasks.length;
   if (halted) { msg.className = "msg warn"; msg.textContent = `Stopped at the ${usd(budget.cap)} spend cap. Spent ~${usd(budget.spent)}.`; }
-  else { msg.className = "msg ok"; msg.textContent = `Done. ${configs.length} configs × ${nt} task${nt > 1 ? "s" : ""} · spent ~${usd(budget.spent)}.`; }
+  else {
+    msg.className = "msg ok";
+    const nc = configs.length;
+    msg.textContent =
+      `Done. ${nc} config${nc > 1 ? "s" : ""} × ${nt} task${nt > 1 ? "s" : ""} · ` +
+      (allMock
+        // Say plainly that nothing was spent, then give the price it would have
+        // carried — that number is the reason to dry-run a shape in the first place.
+        ? `mock substrates, no requests made · spent $0.00 ` +
+          `(would have cost ~${usd(budget.hypothetical)} for real).`
+        : `spent ~${usd(budget.spent)}.`);
+  }
 }
 $("runBtn").addEventListener("click", runSweep);
 
