@@ -155,7 +155,7 @@
   .fold .fbody { padding: 0 1.05rem 1rem; }
   .fold .fnote { font-size: .78rem; color: var(--muted); margin: 0 0 .5rem; }
   /* A fold inside a fold reads as a subordinate, not a peer. */
-  .subfold { margin: 0; background: var(--paper); }
+  .subfold { margin: 0; background: transparent; }
   .subfold > summary { padding: .5rem .7rem; font-size: .7rem; }
   .subfold .fbody { padding: 0 .7rem .7rem; }
   .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
@@ -266,7 +266,12 @@
   textarea, input.txt {
     width: 100%; font-family: var(--mono); font-size: .82rem;
     border: 1px solid var(--line); border-radius: 2px; padding: .55rem .6rem;
-    background: var(--raised); color: var(--ink); resize: vertical;
+    color: var(--ink); resize: vertical;
+    /* --raised is the grey one, and inside a fold it ended up the lightest
+       thing on the page. --paper is the darker navy the shape canvas and the
+       inspector's code blocks already use, so every place that shows code or a
+       drawing now shares one background. */
+    background: var(--paper);
   }
   textarea { min-height: 220px; line-height: 1.45; white-space: pre; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
@@ -345,6 +350,35 @@
   .log .line b { color: var(--ink); }
   .log .line.fail b { color: var(--error); }
   .backend { font-family: var(--mono); font-size: .74rem; color: var(--muted); margin-top: .6rem; }
+
+  /* ---- run inspector ----------------------------------------------------- */
+  .inspect { font-family: var(--mono); font-size: .68rem; color: var(--accent);
+             border: 1px solid var(--accent-line); border-radius: 2px;
+             padding: 0 .3rem; cursor: pointer; margin-left: .3rem; }
+  .inspect:hover { background: var(--accent-soft); }
+  .insp { border: 1px solid var(--accent-line); border-radius: 2px; background: var(--card);
+          margin: .8rem 0; }
+  .insphead { font-family: var(--mono); font-size: .74rem; color: var(--ink);
+              padding: .5rem .7rem; border-bottom: 1px solid var(--line);
+              display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
+  .inspclose { margin-left: auto; font-family: var(--mono); font-size: .68rem;
+               padding: .12rem .45rem; border: 1px solid var(--line); border-radius: 2px;
+               background: transparent; color: var(--faint); cursor: pointer; }
+  .inspclose:hover { border-color: var(--ink); color: var(--ink); }
+  .step { border-bottom: 1px solid var(--line); padding: .6rem .7rem; }
+  .step:last-child { border-bottom: 0; }
+  .step.bad { border-left: 2px solid var(--error); }
+  .steph { font-family: var(--mono); font-size: .74rem; color: var(--ink);
+           display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
+  .steph span { color: var(--faint); font-size: .7rem; }
+  .steph .stepnum { margin-left: auto; }
+  .steperr { font-family: var(--mono); font-size: .72rem; color: var(--error); margin-top: .3rem; }
+  .steplab { font-family: var(--mono); font-size: .64rem; text-transform: uppercase;
+             letter-spacing: .08em; color: var(--faint); margin: .5rem 0 .2rem; }
+  .step pre { font-family: var(--mono); font-size: .72rem; color: var(--ink);
+              background: var(--paper); border: 1px solid var(--line); border-radius: 2px;
+              padding: .5rem .6rem; margin: 0; max-height: 190px; overflow: auto;
+              white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -578,6 +612,7 @@
           <div id="results"><div class="empty">No runs yet. Paste your key, set a config, then run a sweep.</div></div>
           <div id="matrix"></div>
           <div id="paired"></div>
+          <div id="inspector"></div>
           <div class="log" id="log"></div>
         </div>
       </div>
@@ -1097,7 +1132,12 @@ async function runConfigOnce(cfg, task, budget) {
       latency_ms: r.latency_ms,
       input_tokens: r.input_tokens, output_tokens: r.output_tokens,
       cost_usd: round6(cost || 0), ok: r.ok, error: r.error || null,
-      output_preview: (r.text || "").slice(0, 280)   // your own content; trim to keep it light
+      output_preview: (r.text || "").slice(0, 280),  // what the sanitized record carries
+      // The inspector needs what actually went out and came back. These two
+      // fields are stripped before anything is posted (postRun sends only the
+      // sanitized shape) and live in this tab, like the key.
+      _prompt: context,
+      _text: r.text || ""
     });
     if (!r.ok) { ok = false; break; }
     outputs[roleName] = r.text;     // available to every node that depends on it
@@ -1260,6 +1300,53 @@ function validateCustomSuite() {
   } catch (e) { box.className = "msg err"; box.textContent = e.message; }
   updateEstimate();
 }
+
+// Every completed run, in memory, so a log line can be opened. Bounded, because
+// a 20-task x 3-config x 3-run sweep is 180 records and a browser tab is not a
+// database. Never posted anywhere.
+const RUN_LOG = [];
+const RUN_LOG_MAX = 400;
+
+function rememberRun(rec) {
+  RUN_LOG.push(rec);
+  if (RUN_LOG.length > RUN_LOG_MAX) RUN_LOG.shift();
+  return RUN_LOG.length - 1;
+}
+
+// Click a log line to see what actually happened: the prompt each role was
+// handed, what came back, and where it stopped. The numbers say the panel beat
+// the chain by seven tasks; this is the only place that says why.
+function openInspector(idx) {
+  const rec = RUN_LOG[idx];
+  const host = $("inspector");
+  if (!rec || !host) return;
+  const esc = escapeHtml;
+  let html = `<div class="insp"><div class="insphead">` +
+    `<b>${esc(rec.config_name)}</b> · ${esc(rec.task_id || "task")} · ` +
+    `${rec.total_latency_ms} ms · ${usd(rec.total_cost_usd)}` +
+    (rec.score !== null && rec.score !== undefined ? ` · score ${Math.round(rec.score * 100)}%` : "") +
+    `<button type="button" class="inspclose" id="inspClose">close</button></div>`;
+  for (const st of rec.steps) {
+    html += `<div class="step${st.ok ? "" : " bad"}">` +
+      `<div class="steph"><b>${esc(st.role)}</b> <span>${esc(st.model)}</span>` +
+      `<span class="stepnum">${st.latency_ms} ms · ${st.input_tokens}&rarr;${st.output_tokens} tok · ${usd(st.cost_usd)}</span></div>`;
+    if (st.error) html += `<div class="steperr">${esc(st.error)}</div>`;
+    html += `<div class="steplab">prompt in</div><pre>${esc(st._prompt || "(not captured)")}</pre>`;
+    html += `<div class="steplab">answer out</div><pre>${esc(st._text || "(nothing returned)")}</pre>`;
+    html += `</div>`;
+  }
+  html += `</div>`;
+  host.innerHTML = html;
+  $("inspClose").addEventListener("click", () => { host.innerHTML = ""; });
+  host.scrollIntoView({ block: "nearest" });
+}
+
+// One delegated listener rather than one per line: a suite sweep writes 180 of
+// them, and 180 listeners for the same behaviour is just slower.
+document.addEventListener("click", (e) => {
+  const t = e.target.closest(".inspect");
+  if (t) openInspector(Number(t.dataset.run));
+});
 
 function logLine(html, fail) {
   const d = document.createElement("div");
@@ -1618,20 +1705,27 @@ async function runSweep() {
         }
 
         // POST only the sanitized shape — no final_output text, and never a key
+        // The inspector's _prompt/_text are your content and stay in this tab.
+        // rec.steps carries them now, so they are stripped HERE, at the one
+        // boundary that leaves the browser — otherwise adding an inspector would
+        // have quietly started shipping every prompt and answer to the backend.
         const postBody = {
-          config_name: rec.config_name, task: rec.task, steps: rec.steps,
+          config_name: rec.config_name, task: rec.task,
+          steps: rec.steps.map(({ _prompt, _text, ...safe }) => safe),
           total_latency_ms: rec.total_latency_ms, total_cost_usd: rec.total_cost_usd,
           ok: rec.ok, score: rec.score
         };
         const stored = backendUp ? await postRun(postBody) : false;
         const tag = rec.ok ? "ok" : "fail";
         const err = rec.steps.find((s) => s.error);
+        const idx = rememberRun({ ...rec, task_id: t.id, score });
         logLine(
           `<b>${escapeHtml(c.name)}</b> · ${escapeHtml(t.id)} · run ${i}/${runs} · ` +
           `${rec.total_latency_ms} ms · ${usd(rec.total_cost_usd)} · ${tag}` +
           (score !== null ? ` · score ${Math.round(score * 100)}%` : "") +
           (err ? ` — ${escapeHtml(err.error)}` : "") +
-          (stored ? " · stored" : (backendUp ? "" : " · local only")),
+          (stored ? " · stored" : (backendUp ? "" : " · local only")) +
+          ` <span class="inspect" data-run="${idx}">inspect</span>`,
           !rec.ok
         );
         renderResults(); renderMatrix(); renderPaired();
