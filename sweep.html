@@ -5,19 +5,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Harness Config Tool — AI Crash Test</title>
 <style>
-  /* ---- tokens ---------------------------------------------------------- */
+  /* ---- tokens ----------------------------------------------------------
+     Same palette as the landing page and the portfolio: dark-first, amber
+     accent, teal for the key-armed state. The variable NAMES are unchanged
+     from the light original — `paper` is still the page, `ink` is still the
+     text — so every rule below reskins from this block alone.
+     ---------------------------------------------------------------------- */
   :root {
-    --paper:   #f4f5f3;
-    --card:    #ffffff;
-    --ink:     #17191c;
-    --muted:   #656a71;
-    --line:    #e4e6e3;
-    --accent:  #1b4de4;   /* technical blue */
-    --armed:   #0b7a6b;   /* key-in-memory teal */
-    --warn:    #b45309;   /* budget / caution */
-    --error:   #b91c1c;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: dark light;
+    --paper:   #0e1316;   /* page */
+    --card:    #141c21;   /* panel */
+    --raised:  #1b252b;   /* inputs, wells */
+    --ink:     #dae2e4;   /* text */
+    --muted:   #8a989e;
+    --faint:   #5e6c72;
+    --line:    rgba(255,255,255,.09);
+    --accent:  #f2a53c;   /* amber — CTAs and emphasis */
+    --accent-soft: rgba(242,165,60,.13);
+    --accent-line: rgba(242,165,60,.34);
+    --armed:   #48c1ac;   /* key-in-memory teal */
+    --armed-soft: rgba(72,193,172,.12);
+    --warn:    #f2a53c;   /* budget / caution */
+    --error:   #f87171;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --paper:#e9edee; --card:#f4f6f6; --raised:#ffffff;
+      --ink:#131c20; --muted:#4d5a60; --faint:#7c888d;
+      --line:rgba(12,26,32,.12);
+      --accent:#b7761a; --accent-soft:rgba(200,128,26,.12); --accent-line:rgba(200,128,26,.4);
+      --armed:#1c8f7d; --armed-soft:rgba(28,143,125,.1);
+      --warn:#b7761a; --error:#b91c1c;
+    }
+  }
+  :root[data-theme="light"] {
+    --paper:#e9edee; --card:#f4f6f6; --raised:#ffffff;
+    --ink:#131c20; --muted:#4d5a60; --faint:#7c888d;
+    --line:rgba(12,26,32,.12);
+    --accent:#b7761a; --accent-soft:rgba(200,128,26,.12); --accent-line:rgba(200,128,26,.4);
+    --armed:#1c8f7d; --armed-soft:rgba(28,143,125,.1);
+    --warn:#b7761a; --error:#b91c1c;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -46,24 +75,37 @@
   .keybar .spacer { flex: 1 1 auto; }
   .keybar input {
     font-family: var(--mono); font-size: .82rem; padding: .35rem .5rem;
-    border: 1px solid var(--line); border-radius: 6px; width: min(320px, 46vw);
+    border: 1px solid var(--line); border-radius: 2px; width: min(320px, 46vw);
     background: var(--paper); color: var(--ink);
   }
   .keybar button {
     font-family: var(--mono); font-size: .8rem; padding: .38rem .7rem;
-    border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+    border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
     color: var(--ink); cursor: pointer;
   }
   .keybar button:hover { border-color: var(--ink); }
 
   /* ---- shell ----------------------------------------------------------- */
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 4rem; }
+  .wrap {
+    max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 4rem;
+  }
+  body {
+    background-image:
+      linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 34px 34px; background-position: center top;
+  }
+  @media (prefers-color-scheme: light) {
+    body { background-image:
+      linear-gradient(rgba(12,26,32,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(12,26,32,.05) 1px, transparent 1px); }
+  }
   header.mast { margin: 1rem 0 1.6rem; }
   .mast h1 {
     font-family: var(--mono); font-weight: 700; font-size: 1.55rem;
     letter-spacing: -.01em; margin: 0;
   }
-  .mast h1 .never { color: var(--armed); }
+  .mast h1 .never { color: var(--accent); }
   .mast p { color: var(--muted); margin: .4rem 0 0; max-width: 60ch; }
 
   .grid { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 1.2rem; }
@@ -71,7 +113,7 @@
 
   .card {
     background: var(--card); border: 1px solid var(--line);
-    border-radius: 10px; padding: 1rem 1.05rem;
+    border-radius: 3px; padding: 1rem 1.05rem;
   }
   .card + .card { margin-top: 1rem; }
   .card h2 {
@@ -84,8 +126,8 @@
   }
   textarea, input.txt {
     width: 100%; font-family: var(--mono); font-size: .82rem;
-    border: 1px solid var(--line); border-radius: 7px; padding: .55rem .6rem;
-    background: var(--paper); color: var(--ink); resize: vertical;
+    border: 1px solid var(--line); border-radius: 2px; padding: .55rem .6rem;
+    background: var(--raised); color: var(--ink); resize: vertical;
   }
   textarea { min-height: 250px; line-height: 1.45; white-space: pre; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
@@ -95,11 +137,11 @@
 
   button.run {
     width: 100%; font-family: var(--mono); font-weight: 700; font-size: .92rem;
-    padding: .7rem; border: 0; border-radius: 8px; cursor: pointer;
-    background: var(--accent); color: #fff; letter-spacing: .01em;
+    padding: .7rem; border: 1px solid var(--accent-line); border-radius: 2px; cursor: pointer;
+    background: var(--accent-soft); color: var(--accent); letter-spacing: .01em;
   }
   button.run:hover { filter: brightness(1.07); }
-  button.run:disabled { background: var(--muted); cursor: not-allowed; filter: none; }
+  button.run:disabled { background: transparent; border-color: var(--line); color: var(--faint); cursor: not-allowed; filter: none; }
 
   .msg { font-family: var(--mono); font-size: .78rem; margin: .7rem 0 0; }
   .msg.err { color: var(--error); }
@@ -111,15 +153,15 @@
   th, td { text-align: left; padding: .5rem .55rem; border-bottom: 1px solid var(--line); }
   th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tr.best td { background: #f0f7f4; }
+  tr.best td { background: var(--armed-soft); }
   .pill { font-size: .66rem; padding: .06rem .38rem; border-radius: 20px; border: 1px solid var(--armed); color: var(--armed); }
   .matrix { margin-top: 1.1rem; }
   .matrix h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 700; }
   .matrix td.cell { text-align: center; font-size: .72rem; }
   .matrix th.tid, .matrix td.tid { text-align: left; }
-  .mx-pass { background: #e7f4ef; color: var(--armed); }
-  .mx-part { background: #fdf3e7; color: var(--warn); }
-  .mx-fail { background: #fdecec; color: var(--error); }
+  .mx-pass { background: var(--armed-soft); color: var(--armed); }
+  .mx-part { background: var(--accent-soft); color: var(--warn); }
+  .mx-fail { background: rgba(248,113,113,.13); color: var(--error); }
 
   .empty { color: var(--muted); font-family: var(--mono); font-size: .82rem; padding: .5rem 0; }
 

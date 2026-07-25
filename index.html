@@ -3,143 +3,322 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>AI Crash Test — evaluation tools that never hold your key</title>
-<meta name="description" content="Three BYOK tools for trusting an LLM system: drift monitoring, adversarial crash testing, and harness-config sweeps. Deterministic grading, no LLM-as-judge, and your API key never leaves your browser." />
+<title>AI Crash Test — deterministic evaluation tools that never hold your key</title>
+<meta name="description" content="Three BYOK tools for trusting an LLM system: drift monitoring, adversarial crash testing, and harness-config sweeps. Fixed predicates, no LLM-as-judge, and your API key never leaves your browser." />
 <meta property="og:title" content="AI Crash Test" />
-<meta property="og:description" content="Drift monitoring, adversarial crash testing, and harness sweeps — one deterministic grading engine, and your key never touches the server." />
 <meta property="og:type" content="website" />
+<meta property="og:description" content="Drift monitoring, adversarial crash testing, and harness sweeps. Graded by fixed predicates, not by a model — and your key never touches the server." />
 <style>
   :root {
-    --paper:#f4f5f3; --card:#fff; --ink:#17191c; --muted:#656a71; --line:#e4e6e3;
-    --accent:#1b4de4; --armed:#0b7a6b; --warn:#b45309;
-    --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
-    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme: dark light;
+    --ink:#0e1316; --panel:#141c21; --raised:#1b252b;
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.05);
+    --fg:#dae2e4; --fg-dim:#8a989e; --fg-faint:#5e6c72;
+    --amber-ink:#f2a53c; --amber-soft:rgba(242,165,60,.13); --amber-line:rgba(242,165,60,.34);
+    --teal:#48c1ac; --teal-soft:rgba(72,193,172,.12);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --maxw:880px;
   }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans); line-height:1.55; }
-  .wrap { max-width:960px; margin:0 auto; padding:0 1rem 5rem; }
-
-  /* the promise bar — the one element every tool shares */
-  .promise {
-    position:sticky; top:0; z-index:10; background:var(--card);
-    border-bottom:1px solid var(--line); font-family:var(--mono); font-size:.8rem;
-    padding:.7rem 1rem; display:flex; gap:.55rem; align-items:center; flex-wrap:wrap;
+  @media (prefers-color-scheme: light){
+    :root{
+      --ink:#e9edee; --panel:#f4f6f6; --raised:#ffffff;
+      --line:rgba(12,26,32,.12); --line-2:rgba(12,26,32,.07);
+      --fg:#131c20; --fg-dim:#4d5a60; --fg-faint:#7c888d;
+      --amber-ink:#b7761a; --amber-soft:rgba(200,128,26,.12); --amber-line:rgba(200,128,26,.4);
+      --teal:#1c8f7d; --teal-soft:rgba(28,143,125,.1);
+    }
   }
-  .promise .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--armed); flex:none; }
-  .promise b { color:var(--armed); font-weight:700; }
-  .promise .sep { color:var(--line); }
-
-  header.mast { padding:3rem 0 2rem; }
-  .mast h1 { font-family:var(--mono); font-size:clamp(2rem,5vw,3rem); margin:0; letter-spacing:-.02em; line-height:1.05; }
-  .mast h1 .never { color:var(--armed); }
-  .mast .tag { color:var(--muted); font-size:1.08rem; max-width:60ch; margin:1rem 0 0; }
-  .mast .rule { color:var(--ink); font-weight:600; }
-
-  .tools { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:1rem; margin:2.4rem 0; }
-  .tool {
-    background:var(--card); border:1px solid var(--line); border-radius:12px;
-    padding:1.15rem 1.2rem; display:flex; flex-direction:column;
+  :root[data-theme="dark"]{
+    --ink:#0e1316; --panel:#141c21; --raised:#1b252b;
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.05);
+    --fg:#dae2e4; --fg-dim:#8a989e; --fg-faint:#5e6c72;
+    --amber-ink:#f2a53c; --amber-soft:rgba(242,165,60,.13); --amber-line:rgba(242,165,60,.34);
+    --teal:#48c1ac; --teal-soft:rgba(72,193,172,.12);
   }
-  .tool .q { font-family:var(--mono); font-size:.72rem; letter-spacing:.07em;
-             text-transform:uppercase; color:var(--muted); }
-  .tool h2 { font-size:1.16rem; margin:.5rem 0 .5rem; }
-  .tool p { color:var(--muted); font-size:.93rem; margin:0 0 1rem; flex:1; }
-  .tool .cta {
-    font-family:var(--mono); font-size:.82rem; text-decoration:none; text-align:center;
-    padding:.55rem .8rem; border-radius:7px; background:var(--accent); color:#fff; font-weight:600;
+  :root[data-theme="light"]{
+    --ink:#e9edee; --panel:#f4f6f6; --raised:#ffffff;
+    --line:rgba(12,26,32,.12); --line-2:rgba(12,26,32,.07);
+    --fg:#131c20; --fg-dim:#4d5a60; --fg-faint:#7c888d;
+    --amber-ink:#b7761a; --amber-soft:rgba(200,128,26,.12); --amber-line:rgba(200,128,26,.4);
+    --teal:#1c8f7d; --teal-soft:rgba(28,143,125,.1);
   }
-  .tool .cta.soft { background:var(--paper); color:var(--ink); border:1px solid var(--line); }
-  .tool .status { font-family:var(--mono); font-size:.7rem; margin-top:.6rem; color:var(--muted); }
-  .tool .status .live { color:var(--armed); font-weight:700; }
-  .tool .status .beta { color:var(--warn); font-weight:700; }
 
-  section.why { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:1.4rem 1.5rem; margin-top:1rem; }
-  section.why h3 { font-family:var(--mono); font-size:.74rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin:0 0 .9rem; }
-  section.why ul { margin:0; padding-left:1.1rem; color:var(--muted); }
-  section.why li { margin:.5rem 0; }
-  section.why li b { color:var(--ink); }
-  code { font-family:var(--mono); font-size:.86em; background:var(--paper); padding:.1rem .3rem; border-radius:4px; }
-  footer { color:var(--muted); font-family:var(--mono); font-size:.76rem; margin-top:2.4rem; }
-  footer a { color:var(--accent); }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--ink)}
+  .wrap{
+    background:var(--ink); color:var(--fg); font-family:var(--sans);
+    font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+    background-image:
+      linear-gradient(var(--line-2) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+    background-size:34px 34px; background-position:center top;
+    padding:0 20px 72px;
+  }
+  .col{max-width:var(--maxw); margin:0 auto}
+
+  .label{font-family:var(--mono); font-size:19px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--amber-ink)}
+  h2{font-family:var(--mono); font-weight:600; font-size:clamp(26px,4.6vw,38px); letter-spacing:-.02em; margin:.75rem 0 0; line-height:1.12; text-wrap:balance; color:var(--fg)}
+  p{color:var(--fg-dim); max-width:64ch}
+  strong{color:var(--fg); font-weight:600}
+  a{color:var(--amber-ink); text-decoration:none}
+  a:focus-visible{outline:2px solid var(--amber-ink); outline-offset:3px; border-radius:3px}
+  code{font-family:var(--mono); font-size:.9em; color:var(--fg); background:var(--raised); border:1px solid var(--line); padding:1px 5px; border-radius:2px}
+
+  /* ---- the key bar : the one promise every tool shares -------------------- */
+  .keybar{
+    position:sticky; top:0; z-index:10; background:var(--panel);
+    border-bottom:1px solid var(--line); font-family:var(--mono); font-size:13px;
+    padding:11px 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    color:var(--fg-dim);
+  }
+  .keybar .col{display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%}
+  .keybar .v{width:7px; height:7px; border-radius:50%; background:var(--teal); flex:none;
+             animation:pulse 2.4s ease-in-out infinite}
+  .keybar b{color:var(--teal); font-weight:600}
+  .keybar .sep{color:var(--fg-faint)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.keybar .v{animation:none}}
+  /* The bar is sticky, so an #anchor would otherwise park the heading UNDERNEATH
+     it. Reserve its height on every jump target. */
+  [id]{scroll-margin-top:96px}
+  /* Narrow viewports stacked the bar three lines deep and ate the fold. The
+     promise itself always shows; the elaborations drop first. */
+  @media (max-width:720px){
+    .keybar .sep,.keybar .drop{display:none}
+    .keybar{padding:10px 20px}
+  }
+
+  /* ---- hero -------------------------------------------------------------- */
+  header{padding:76px 0 34px; border-bottom:1px solid var(--line)}
+  .eye{font-family:var(--mono); font-size:19px; letter-spacing:.18em; font-weight:600; text-transform:uppercase; color:var(--amber-ink); display:flex; align-items:center; gap:10px}
+  .eye::before{content:""; width:26px; height:1px; background:var(--amber-line)}
+  h1{font-family:var(--mono); font-weight:600; font-size:clamp(38px,9vw,74px); line-height:.98; letter-spacing:-.02em; margin:18px 0 0; color:var(--fg)}
+  .thesis{font-family:var(--sans); font-size:clamp(19px,3.2vw,25px); line-height:1.34; color:var(--fg); max-width:24ch; margin:24px 0 0; font-weight:450; text-wrap:balance}
+  .thesis b{color:var(--amber-ink); font-weight:600}
+  .lede{margin:20px 0 0; max-width:62ch}
+  .meta{display:flex; flex-wrap:wrap; gap:8px; margin-top:26px}
+  .chip{font-family:var(--mono); font-size:13.5px; color:var(--fg-dim); border:1px solid var(--line); background:var(--panel); padding:7px 12px; border-radius:2px; display:inline-flex; align-items:center; gap:7px}
+  .chip .dot{width:6px; height:6px; border-radius:50%; background:var(--teal)}
+
+  section{padding:70px 0 58px; border-bottom:1px solid var(--line)}
+  .intro{color:var(--fg-dim); margin-top:12px}
+
+  /* ---- tool cards -------------------------------------------------------- */
+  .tools{margin-top:28px; display:grid; gap:14px}
+  .tool{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--amber-line);
+    border-radius:3px; padding:18px 20px; display:grid; grid-template-columns:1fr auto; gap:22px; align-items:center}
+  @media (max-width:640px){.tool{grid-template-columns:1fr; gap:14px}}
+  .tool .tmain{min-width:0}
+  .tool .tside{display:flex; flex-direction:column; gap:8px; justify-content:center; white-space:nowrap}
+  .tool .th{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .tool .tname{font-family:var(--mono); font-size:14.5px; font-weight:600; color:var(--fg)}
+  .tool .q{font-family:var(--mono); font-size:11.5px; color:var(--fg-faint); letter-spacing:.02em; margin-top:2px}
+  .tool p{margin:9px 0 0; font-size:15.5px; color:var(--fg-dim); line-height:1.55; max-width:70ch}
+  .tool .ttags{display:flex; flex-wrap:wrap; gap:6px; margin-top:11px}
+  .ttag{font-family:var(--mono); font-size:12px; color:var(--fg-faint); border:1px solid var(--line); padding:3px 7px; border-radius:2px}
+  .pci{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; border-radius:2px;
+    padding:2px 7px; white-space:nowrap; display:inline-flex; gap:6px; align-items:center;
+    color:var(--teal); border:1px solid var(--teal); background:var(--teal-soft)}
+  .pci .v{width:6px; height:6px; border-radius:50%; background:var(--teal)}
+  .pci.live{color:var(--amber-ink); border-color:var(--amber-line); background:var(--amber-soft)}
+  .pci.live .v{background:var(--amber-ink); animation:pulse 2s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){.pci.live .v{animation:none}}
+  .plive{display:inline-flex; align-items:center; justify-content:center; gap:8px; font-family:var(--mono); font-size:12.5px;
+    padding:10px 15px; border-radius:2px; border:1px solid var(--amber-line); color:var(--amber-ink);
+    background:var(--amber-soft); transition:background .15s}
+  @media (hover:hover){.plive:hover{background:var(--amber-ink); color:var(--ink)}}
+  .tool.t-drift{border-left-color:var(--teal)}
+  .tool.t-crash{border-left-color:var(--amber-line)}
+  .tool.t-harness{border-left-color:#a78bfa}
+
+  /* ---- engine fan -------------------------------------------------------- */
+  .fan{margin-top:28px}
+  .engine{background:var(--raised); border:1px solid var(--amber-line); border-radius:3px;
+    padding:13px 18px; display:inline-flex; flex-direction:column; gap:2px}
+  .engine .en{font-family:var(--mono); font-size:14px; font-weight:600; color:var(--amber-ink)}
+  .engine .es{font-family:var(--mono); font-size:11.5px; color:var(--fg-faint)}
+  .stem{width:2px; height:26px; background:var(--amber-line); margin-left:38px}
+  .arms{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px;
+    border-top:2px solid var(--amber-line); padding-top:16px}
+  .arm{background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:12px 14px}
+  .arm .an{font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--fg)}
+  .arm .aw{font-size:13.5px; color:var(--fg-dim); margin-top:4px; line-height:1.45}
+  .arm.out{border-style:dashed}
+  .arm.out .an{color:var(--fg-faint)}
+
+  /* ---- rules ------------------------------------------------------------- */
+  .rules{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px 26px; margin-top:28px}
+  .rules div{border-left:2px solid var(--amber-line); padding-left:14px}
+  .rules b{display:block; font-family:var(--mono); font-size:12.5px; color:var(--fg); margin-bottom:4px; letter-spacing:.02em}
+  .rules span{font-size:15px; color:var(--fg-dim)}
+
+  .oracle{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--amber-ink);
+    border-radius:3px; padding:24px 26px 20px; margin-top:26px}
+  .oracle .big{font-family:var(--sans); font-size:clamp(17px,2.6vw,20px); color:var(--fg); font-weight:500; margin:0; max-width:56ch; line-height:1.42}
+  .oracle .big em{font-style:normal; color:var(--amber-ink)}
+  .oracle p{margin:14px 0 0; font-size:15px}
+
+  footer{padding:44px 0 0; color:var(--fg-faint); font-family:var(--mono); font-size:13px}
+  footer a{color:var(--amber-ink)}
 </style>
 </head>
 <body>
-
-<div class="promise">
-  <span class="dot"></span>
-  <b>Your key never reaches our servers.</b>
-  <span class="sep">·</span>
-  <span>it stays in your browser tab, in memory</span>
-  <span class="sep">·</span>
-  <span>every tool below is open source — check it yourself</span>
-</div>
-
 <div class="wrap">
-  <header class="mast">
-    <h1>AI <span class="never">Crash Test</span></h1>
-    <p class="tag">Three tools for the same question: <span class="rule">can you trust this model, and this harness, tomorrow?</span>
-       All three grade with fixed predicates — <span class="rule">no LLM-as-judge</span> — so a score that moves means the
-       <em>system</em> moved, not the test. Bring your own key; it never leaves your tab.</p>
-  </header>
 
-  <div class="tools">
-    <div class="tool">
-      <span class="q">Is it changing under me?</span>
-      <h2>Model Drift</h2>
-      <p>A frozen 35-task suite runs against 16 live models every day. Every run is kept, and a drop
-         against the previous run is flagged automatically — including the false alarms, which get
-         published too.</p>
-      <a class="cta" href="https://egnaro9.github.io/model-drift/">Open the live board</a>
-      <div class="status"><span class="live">● live</span> · updated daily · no key needed</div>
-    </div>
-
-    <div class="tool">
-      <span class="q">Does it break under attack?</span>
-      <h2>AI Crash Test</h2>
-      <p>Point your own model at adversarial batteries — injection, tool-abuse, hallucination-bait,
-         refusal calibration, retrieval grounding, agent trajectories — and get a severity-weighted
-         vulnerability report with a fail card for every miss.</p>
-      <a class="cta" href="https://crashkit.onrender.com">Crash-test a model</a>
-      <div class="status"><span class="live">● live</span> · your key, your browser</div>
-    </div>
-
-    <div class="tool">
-      <span class="q">Which configuration should I run?</span>
-      <h2>Harness Config Tool</h2>
-      <p>A harness config is data: roles, models, scaffolding, topology. Declare the axes you want to
-         vary and it runs the whole matrix against a scored coding suite, then ranks by correctness
-         first and cost second.</p>
-      <a class="cta soft" href="./sweep.html">Run a sweep</a>
-      <div class="status"><span class="beta">● beta</span> · the sweep runs here in your browser ·
-        <a href="https://github.com/egnaro9/never-touch-ai" style="color:inherit">scoring needs the local backend</a></div>
+  <!-- SIGNATURE: the promise every tool here shares, stated before anything else -->
+  <div class="keybar">
+    <div class="col">
+      <span class="v"></span>
+      <b>Your key never reaches our servers.</b>
+      <span class="sep">·</span>
+      <span class="drop">it stays in your browser tab, in memory</span>
+      <span class="sep">·</span>
+      <span class="drop">every tool is open source — check it yourself</span>
     </div>
   </div>
 
-  <section class="why">
-    <h3>What makes these one product and not three demos</h3>
-    <ul>
-      <li><b>One grading engine.</b> All three import the same predicates from
-        <code>gradecore</code> — a shared package, not three codebases that happen to agree. A
-        verdict is a function of the output, so it reproduces exactly; rerun it and argue with it.
-        The one exception is honest: running generated code is I/O, not a pure predicate, so the
-        sweep's <code>python</code> check executes locally and labels itself as such in every
-        result.</li>
-      <li><b>One key rule.</b> The browser calls the provider directly with your key. No proxy, no
-        server-side storage, no "remember me" checkbox. The backend's ingest endpoint actively
-        <em>refuses</em> any payload that looks key-shaped, so even a buggy client can't leak one.</li>
-      <li><b>One wire format.</b> Every run serializes to the same <code>eval_run.json</code>, so a
-        crash-test result and a drift run land in the same history and can be compared over time.</li>
-      <li><b>Failures are published, not hidden.</b> The drift board's field notes include the week
-        four regression alerts turned out to be rate limits and single-question noise. A tool that
-        never reports its own false positives hasn't looked.</li>
-    </ul>
-  </section>
+  <div class="col">
 
-  <footer>
-    Built by <a href="https://egnaro9.github.io">Erik Hill</a> ·
-    source on <a href="https://github.com/egnaro9">GitHub</a> ·
-    the "never touch" claim is checkable because the client is readable source.
-  </footer>
+    <header>
+      <div class="eye">Deterministic LLM evaluation</div>
+      <h1>AI Crash Test</h1>
+      <p class="thesis">Three tools for one question: <b>can you trust this system tomorrow?</b></p>
+      <p class="lede">All three grade with fixed predicates — <strong>no LLM-as-judge</strong> — so a score
+        that moves means the system moved, not the test. Bring your own key; it never leaves your tab.</p>
+      <div class="meta">
+        <span class="chip"><span class="dot"></span>2 live services</span>
+        <span class="chip">no LLM-as-judge</span>
+        <span class="chip">BYOK, browser-direct</span>
+        <span class="chip"><a href="https://github.com/egnaro9">source on GitHub</a></span>
+      </div>
+    </header>
+
+    <section id="lenses">
+      <div class="label">01 / The lenses</div>
+      <h2>Three questions, three tools</h2>
+      <p class="intro">Same discipline pointed at different failure modes.</p>
+
+      <div class="tools">
+
+        <div class="tool t-drift">
+          <div class="tmain">
+            <div class="th">
+              <span class="tname">Model Drift</span>
+              <span class="pci live"><span class="v"></span>live</span>
+            </div>
+            <div class="q">Is it changing under me?</div>
+            <p>A frozen 35-task suite runs against 16 live models every day. Every run is kept, and a
+               drop against the previous run is flagged automatically — including the false alarms,
+               which get published too.</p>
+            <div class="ttags"><span class="ttag">daily</span><span class="ttag">no key needed</span><span class="ttag">longitudinal</span></div>
+          </div>
+          <div class="tside"><a class="plive" href="https://egnaro9.github.io/model-drift/">Open the live board</a></div>
+        </div>
+
+        <div class="tool t-crash">
+          <div class="tmain">
+            <div class="th">
+              <span class="tname">AI Crash Test</span>
+              <span class="pci live"><span class="v"></span>live</span>
+            </div>
+            <div class="q">Does it break under attack?</div>
+            <p>Point your own model at adversarial batteries — injection, tool-abuse, hallucination-bait,
+               refusal calibration, retrieval grounding, agent trajectories — and get a severity-weighted
+               vulnerability report with a fail card for every miss.</p>
+            <div class="ttags"><span class="ttag">adversarial</span><span class="ttag">your key, your browser</span><span class="ttag">severity-weighted</span></div>
+          </div>
+          <div class="tside"><a class="plive" href="https://crashkit.onrender.com">Crash-test a model</a></div>
+        </div>
+
+        <div class="tool t-harness">
+          <div class="tmain">
+            <div class="th">
+              <span class="tname">Harness Config Tool</span>
+              <span class="pci">beta</span>
+            </div>
+            <div class="q">Which configuration should I run?</div>
+            <p>A harness config is data: roles, models, scaffolding, topology. Declare the axes you want
+               to vary and it runs the whole matrix against a scored coding suite, then ranks by
+               correctness first and cost second. Topology is a graph, so a two-vendor panel with a
+               judge is expressible — not just a chain.</p>
+            <div class="ttags"><span class="ttag">graph topology</span><span class="ttag">cross-vendor</span><span class="ttag">scoring needs the local backend</span></div>
+          </div>
+          <div class="tside"><a class="plive" href="./sweep.html">Run a sweep</a></div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="engine">
+      <div class="label">02 / The engine</div>
+      <h2>One grading engine, not three that agree</h2>
+      <p class="intro">A verdict is a function of the output, so it reproduces exactly. Rerun it and
+         argue with it.</p>
+
+      <div class="fan">
+        <div class="engine">
+          <span class="en">gradecore</span>
+          <span class="es">fixed predicates · pure, no I/O</span>
+        </div>
+        <div class="stem"></div>
+        <div class="arms">
+          <div class="arm">
+            <div class="an">AI Crash Test</div>
+            <div class="aw">imports it — 8 modules</div>
+          </div>
+          <div class="arm">
+            <div class="an">Harness Config Tool</div>
+            <div class="aw">imports it — <code>server.py</code></div>
+          </div>
+          <div class="arm out">
+            <div class="an">Model Drift</div>
+            <div class="aw">does <strong>not</strong> — it predates the extraction and still carries its own copy</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="oracle">
+        <p class="big">The drift board is the one that <em>hasn't</em> been folded in yet.</p>
+        <p>It was written before <code>gradecore</code> was extracted and still grades with its own copy
+          of the predicates. That is a duplication to pay down, not a design — and it is named here
+          because a page claiming "one engine" while one of its three tools quietly runs a second copy
+          would be exactly the kind of unchecked claim these tools exist to catch.</p>
+      </div>
+
+      <div class="rules">
+        <div>
+          <b>ONE HONEST EXCEPTION</b>
+          <span>Running generated code is I/O, not a pure predicate. The harness tool's
+            <code>python</code> check executes locally and labels itself as such in every result.</span>
+        </div>
+        <div>
+          <b>ONE KEY RULE</b>
+          <span>The browser calls the provider directly with your key. No proxy, no server-side storage,
+            no "remember me". The ingest endpoint actively refuses any payload that looks key-shaped, so
+            even a buggy client can't leak one.</span>
+        </div>
+        <div>
+          <b>ONE WIRE FORMAT</b>
+          <span>Every run serializes to the same <code>eval_run.json</code>, so a crash-test result and a
+            drift run land in the same history and can be compared over time.</span>
+        </div>
+        <div>
+          <b>FAILURES GET PUBLISHED</b>
+          <span>The drift board's field notes include the week four regression alerts turned out to be
+            rate limits and single-question noise. A tool that never reports its own false positives
+            hasn't looked.</span>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Built by <a href="https://egnaro9.github.io">Erik Hill</a> ·
+      source on <a href="https://github.com/egnaro9">GitHub</a> ·
+      the "never touches your key" claim is checkable because the client is readable source.
+    </footer>
+
+  </div>
 </div>
 </body>
 </html>
