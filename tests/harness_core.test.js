@@ -275,3 +275,56 @@ test("partial credit is compared, not just pass/fail", () => {
   assert.equal(r.wins, 1);
   assert.equal(r.detail[0].winner, "a");
 });
+
+// ---------------------------------------------------------------------------
+// COST-ADJUSTED VERDICT
+// ---------------------------------------------------------------------------
+const { costVerdict } = core;
+
+const pair = (w, l, t) => {
+  const a = {}, b = {};
+  for (let i = 0; i < w; i++) { a["w" + i] = 1; b["w" + i] = 0; }
+  for (let i = 0; i < l; i++) { a["l" + i] = 0; b["l" + i] = 1; }
+  for (let i = 0; i < t; i++) { a["t" + i] = 1; b["t" + i] = 1; }
+  return pairedCompare(a, b);
+};
+
+test("an expensive config that cannot be shown better buys nothing", () => {
+  // The reason this exists. Ranking by mean would put the 4x config on top for
+  // a difference the suite cannot detect, which reads as a trade-off when it is
+  // simply a higher bill.
+  const v = costVerdict(pair(3, 3, 14), 0.04, 0.01, "panel", "solo");
+  assert.equal(v.worth, false);
+  assert.match(v.text, /4\.0×/);
+  assert.match(v.text, /buys nothing/);
+});
+
+test("underpowered is reported as buying nothing too, with the right reason", () => {
+  const v = costVerdict(pair(2, 0, 18), 0.04, 0.01, "panel", "solo");
+  assert.equal(v.worth, false);
+  assert.match(v.text, /cannot decide/, "not 'indistinguishable' — the suite never had the power");
+});
+
+test("when the dearer config genuinely wins, the price of the win is stated", () => {
+  const v = costVerdict(pair(8, 1, 11), 0.04, 0.01, "panel", "solo");
+  assert.equal(v.worth, null, "the tool prices the trade-off; it does not make the call");
+  assert.match(v.text, /wins by 7 tasks/);
+  assert.match(v.text, /per extra task won/);
+  assert.match(v.text, /your call, not the tool's/);
+});
+
+test("a cheaper config that also wins is not framed as a trade-off", () => {
+  const v = costVerdict(pair(0, 8, 12), 0.04, 0.01, "panel", "solo");
+  assert.equal(v.worth, true);
+  assert.match(v.text, /both better AND/);
+  assert.match(v.text, /no trade-off/);
+});
+
+test("an unpriced side refuses to compute a trade-off rather than assuming zero", () => {
+  // Same rule as costOf returning null: a missing price is unknown, not free.
+  for (const [ca, cb] of [[null, 0.01], [0.04, null], [0, 0.01], [NaN, 0.01]]) {
+    const v = costVerdict(pair(8, 1, 11), ca, cb, "panel", "solo");
+    assert.equal(v.known, false, `costs ${ca}/${cb} must not yield a verdict`);
+    assert.match(v.text, /cost unknown/);
+  }
+});

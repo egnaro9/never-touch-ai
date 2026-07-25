@@ -284,10 +284,62 @@ function pairedVerdict(r, nameA, nameB) {
 }
 
 
+// ===========================================================================
+// COST-ADJUSTED VERDICT — is being better worth what it costs?
+//
+// "Correctness first, cost second" answers the wrong question when the win is
+// not established. A config that is 4x the price and cannot be SHOWN better is
+// not a trade-off, it is just more expensive, and the ranking should say so
+// rather than quietly placing it above on a difference the suite cannot detect.
+// ===========================================================================
+
+function costVerdict(r, costA, costB, nameA, nameB) {
+  const a = nameA || "A", b = nameB || "B";
+  const known = Number.isFinite(costA) && Number.isFinite(costB) && costA > 0 && costB > 0;
+  if (!known) return { known: false, text: "cost unknown for one side — no trade-off can be computed." };
+
+  const dearer = costA > costB ? "a" : "b";
+  const ratio = Math.max(costA, costB) / Math.min(costA, costB);
+  const dearName = dearer === "a" ? a : b;
+  const cheapName = dearer === "a" ? b : a;
+  const ratioTxt = ratio.toFixed(ratio >= 10 ? 0 : 1) + "\u00d7";
+
+  // Not decisive: the expensive one has not earned anything, whichever it is.
+  if (!r.decisive) {
+    const why = r.underpowered
+      ? "the suite cannot decide between them"
+      : "they are indistinguishable on this suite";
+    return {
+      known: true, worth: false, ratio,
+      text: `${dearName} costs ${ratioTxt} more than ${cheapName} and ${why} — ` +
+            `on this evidence the extra spend buys nothing.`,
+    };
+  }
+
+  const winner = r.winner === "a" ? a : b;
+  const margin = Math.abs(r.wins - r.losses);
+  // The cheaper one won: no trade-off at all, it is simply better.
+  if (winner === cheapName) {
+    return {
+      known: true, worth: true, ratio,
+      text: `${cheapName} is both better AND ${ratioTxt} cheaper than ${dearName} — ` +
+            `there is no trade-off to weigh.`,
+    };
+  }
+  // The dearer one won: state the price of the win and let the reader judge.
+  const perWin = (Math.max(costA, costB) - Math.min(costA, costB)) / margin;
+  return {
+    known: true, worth: null, ratio,
+    text: `${dearName} wins by ${margin} task${margin === 1 ? "" : "s"} and costs ${ratioTxt} more ` +
+          `(${usd(perWin)} per extra task won). Whether that is worth it is your call, not the tool's.`,
+  };
+}
+
+
 return {
   PRICING, PRICING_VERIFIED, PRICING_SOURCE,
   baseModelId, todayISO, priceFor, costOf, round6, usd, short,
   asGraph, orderOf, terminalsOf, shapeLabel, expandSweep,
-  choose, signTestP, pairedCompare, pairedVerdict,
+  choose, signTestP, pairedCompare, pairedVerdict, costVerdict,
 };
 });

@@ -212,6 +212,7 @@
   .pair.weak     { border-left-color: var(--warn); }
   .pair b { color: var(--ink); }
   .pair .tally { color: var(--faint); }
+  .pair .cost { display: inline-block; margin-top: .25rem; color: var(--accent); opacity: .85; }
 
   .log { font-family: var(--mono); font-size: .76rem; margin-top: 1rem; max-height: 320px; overflow: auto; }
   .log .line { padding: .28rem 0; border-bottom: 1px dashed var(--line); color: var(--muted); }
@@ -890,9 +891,18 @@ function renderPaired() {
   let html = '<div class="paired"><h3>Paired comparison — is the difference real?</h3>';
   for (const { A, B, i, j, r } of rows) {
     const cls = r.decisive ? "decisive" : (r.underpowered ? "weak" : "");
+    // Cost per TASK, averaged over the runs, so the two sides are comparable
+    // even when one config ran more times than the other.
+    const meanCost = (cname) => {
+      const agr = agg.get(cname);
+      if (!agr || !agr.n || agr.unpriced) return null;   // unpriced stays unknown, never 0
+      return agr.cost / agr.n;
+    };
+    const cv = costVerdict(r, meanCost(A), meanCost(B), `#${i + 1}`, `#${j + 1}`);
     html += `<div class="pair ${cls}"><b>#${i + 1} vs #${j + 1}</b> — ` +
             escapeHtml(pairedVerdict(r, `#${i + 1}`, `#${j + 1}`)) +
-            ` <span class="tally">[${r.shared} shared · ${r.informative} informative]</span></div>`;
+            ` <span class="tally">[${r.shared} shared · ${r.informative} informative]</span>` +
+            `<br><span class="cost">${escapeHtml(cv.text)}</span></div>`;
   }
   html += '</div>';
   cont.innerHTML = html;
