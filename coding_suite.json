@@ -1,0 +1,246 @@
+{
+  "name": "coding-starter-v2",
+  "description": "Curated agentic-coding tasks with execution checks. Every task verified against a reference solution.",
+  "tasks": [
+    {
+      "id": "rle_encode",
+      "category": "generate",
+      "prompt": "Write a function `rle_encode(s: str) -> str` that run-length-encodes a string as character followed by its run count: \"aaabbc\" -> \"a3b2c1\". A single character \"x\" -> \"x1\". Empty string -> \"\". Return only the Python code in one code block.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "rle_encode",
+          "test": "assert rle_encode(\"aaabbc\") == \"a3b2c1\"\nassert rle_encode(\"\") == \"\"\nassert rle_encode(\"x\") == \"x1\"\nassert rle_encode(\"aabbaa\") == \"a2b2a2\"\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "first_evens_fix",
+      "category": "fix",
+      "prompt": "The function below should return a list of the first `n` even numbers starting from 0, but it is buggy. Fix it, keeping the name `first_evens`. Return only the corrected Python code.\n```python\ndef first_evens(n):\n    return [2 * i for i in range(1, n)]\n```",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "first_evens_fix",
+          "test": "assert first_evens(3) == [0, 2, 4]\nassert first_evens(0) == []\nassert first_evens(1) == [0]\nassert first_evens(5) == [0, 2, 4, 6, 8]\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "is_balanced",
+      "category": "algorithm",
+      "prompt": "Write `is_balanced(s: str) -> bool` returning True iff the bracket characters ()[]{} in the string are balanced and correctly nested. Non-bracket characters are ignored. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "is_balanced",
+          "test": "assert is_balanced(\"([]{})\") is True\nassert is_balanced(\"([)]\") is False\nassert is_balanced(\"(\") is False\nassert is_balanced(\"\") is True\nassert is_balanced(\"a(b)c\") is True\nassert is_balanced(\"][\") is False\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "merge_intervals",
+      "category": "algorithm",
+      "prompt": "Write `merge(intervals: list[list[int]]) -> list[list[int]]` that merges all overlapping intervals (touching endpoints count as overlapping) and returns them sorted by start. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "merge_intervals",
+          "test": "assert merge([[1,3],[2,6],[8,10],[15,18]]) == [[1,6],[8,10],[15,18]]\nassert merge([[1,4],[4,5]]) == [[1,5]]\nassert merge([]) == []\nassert merge([[1,4],[2,3]]) == [[1,4]]\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "word_freq",
+      "category": "transform",
+      "prompt": "Write `word_freq(text: str) -> dict` that returns a case-insensitive word-frequency dict. Split on whitespace and strip surrounding punctuation .,!?;: from each token. Empty input -> {}. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "word_freq",
+          "test": "assert word_freq(\"The cat, the CAT!\") == {\"the\": 2, \"cat\": 2}\nassert word_freq(\"\") == {}\nassert word_freq(\"Hi! Hi, hi.\") == {\"hi\": 3}\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "min_stack",
+      "category": "class",
+      "prompt": "Implement a class `MinStack` with methods push(x), pop() (removes and returns the top), and min() (returns the current minimum), each running in O(1). Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "min_stack",
+          "test": "s = MinStack(); s.push(3); s.push(1); s.push(2)\nassert s.min() == 1\nassert s.pop() == 2\nassert s.min() == 1\nassert s.pop() == 1\nassert s.min() == 3\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "flatten",
+      "category": "recursion",
+      "prompt": "Write `flatten(lst) -> list` that flattens an arbitrarily nested list of integers into a single flat list, preserving order. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "flatten",
+          "test": "assert flatten([1, [2, [3, 4], 5]]) == [1, 2, 3, 4, 5]\nassert flatten([]) == []\nassert flatten([[[[1]]]]) == [1]\nassert flatten([1, 2, 3]) == [1, 2, 3]\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "to_roman",
+      "category": "algorithm",
+      "prompt": "Write `to_roman(n: int) -> str` converting an integer 1..3999 into its Roman numeral. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "to_roman",
+          "test": "assert to_roman(4) == \"IV\"\nassert to_roman(9) == \"IX\"\nassert to_roman(58) == \"LVIII\"\nassert to_roman(1994) == \"MCMXCIV\"\nassert to_roman(3999) == \"MMMCMXCIX\"\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "mutable_default_fix",
+      "category": "fix",
+      "prompt": "The function below has the classic mutable-default-argument bug: results leak across calls. Fix it, keeping the name `append_item`. It should return the list with `item` appended. Return only the corrected Python code.\n```python\ndef append_item(item, lst=[]):\n    lst.append(item)\n    return lst\n```",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "mutable_default_fix",
+          "test": "assert append_item(1) == [1]\nassert append_item(2) == [2]          # must not be [1, 2]\nassert append_item(3, [10]) == [10, 3]\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "group_anagrams",
+      "category": "algorithm",
+      "prompt": "Write `group_anagrams(words: list[str]) -> list[list[str]]` that groups words that are anagrams of each other. The order of groups and of words within groups does not matter. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "group_anagrams",
+          "test": "res = group_anagrams([\"eat\",\"tea\",\"tan\",\"ate\",\"nat\",\"bat\"])\nnorm = sorted(sorted(g) for g in res)\nassert norm == sorted(sorted(g) for g in [[\"ate\",\"eat\",\"tea\"],[\"nat\",\"tan\"],[\"bat\"]])\nassert group_anagrams([]) == []\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "bsearch",
+      "category": "algorithm",
+      "prompt": "Write `bsearch(arr: list[int], target: int) -> int` returning the index of `target` in a sorted ascending list, or -1 if it is not present. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "bsearch",
+          "test": "assert bsearch([1,3,5,7,9], 7) == 3\nassert bsearch([1,3,5], 2) == -1\nassert bsearch([], 1) == -1\nassert bsearch([5], 5) == 0\nassert bsearch([1,2,3,4,5], 1) == 0\nassert bsearch([1,2,3,4,5], 5) == 4\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "grade_refactor",
+      "category": "refactor",
+      "prompt": "Refactor the function below to be clean and readable while preserving its exact behavior for integer scores 0..100. Keep the name `grade`. Return only the refactored Python code.\n```python\ndef grade(score):\n    if score >= 90:\n        return \"A\"\n    else:\n        if score >= 80:\n            return \"B\"\n        else:\n            if score >= 70:\n                return \"C\"\n            else:\n                if score >= 60:\n                    return \"D\"\n                else:\n                    return \"F\"\n```",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "grade_refactor",
+          "test": "assert grade(95) == \"A\"\nassert grade(90) == \"A\"\nassert grade(89) == \"B\"\nassert grade(72) == \"C\"\nassert grade(60) == \"D\"\nassert grade(59) == \"F\"\nassert grade(100) == \"A\"\nassert grade(0) == \"F\"\nprint(\"ok\")"
+        }
+      ]
+    },
+    {
+      "id": "two_sum",
+      "category": "algorithm",
+      "prompt": "Write `two_sum(nums: list[int], target: int) -> list[int]` returning the indices of the two numbers that add to `target`, as a list `[i, j]` with i < j. Exactly one solution exists. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "two_sum",
+          "test": "assert two_sum([2,7,11,15], 9) == [0,1]\nassert two_sum([3,2,4], 6) == [1,2]\nassert two_sum([3,3], 6) == [0,1]\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "off_by_one_fix",
+      "category": "fix",
+      "prompt": "The function below should return the last `n` items of a list, but it is buggy. Fix it, keeping the name `last_n`. `last_n(lst, 0)` must return `[]`. Return only the corrected Python code.\n```python\ndef last_n(lst, n):\n    return lst[-n:]\n```",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "off_by_one_fix",
+          "test": "assert last_n([1,2,3,4], 2) == [3,4]\nassert last_n([1,2,3], 0) == []\nassert last_n([1,2], 5) == [1,2]\nassert last_n([], 3) == []\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "chunk",
+      "category": "transform",
+      "prompt": "Write `chunk(lst: list, size: int) -> list[list]` splitting a list into consecutive chunks of length `size`; the final chunk may be shorter. `size` < 1 raises ValueError. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "chunk",
+          "test": "assert chunk([1,2,3,4,5], 2) == [[1,2],[3,4],[5]]\nassert chunk([], 3) == []\nassert chunk([1,2,3], 3) == [[1,2,3]]\ntry:\n    chunk([1], 0); raise AssertionError('should raise')\nexcept ValueError: pass\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "lru_cache_class",
+      "category": "class",
+      "prompt": "Implement a class `LRUCache` with `__init__(capacity)`, `get(key)` returning the value or -1, and `put(key, value)`. Evict the least-recently-used entry when over capacity. Both operations O(1). Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "lru_cache_class",
+          "test": "c = LRUCache(2)\nc.put(1,1); c.put(2,2)\nassert c.get(1) == 1\nc.put(3,3)          # evicts key 2\nassert c.get(2) == -1\nc.put(4,4)          # evicts key 1\nassert c.get(1) == -1\nassert c.get(3) == 3\nassert c.get(4) == 4\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "parse_ini",
+      "category": "parsing",
+      "prompt": "Write `parse_ini(text: str) -> dict` parsing a tiny INI format into `{section: {key: value}}`. Lines like `[name]` start a section; `key = value` pairs belong to the current section; blank lines and lines starting with `#` are ignored; keys and values are stripped. Keys before any section go under `''`. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "parse_ini",
+          "test": "t = '# c\\na = 1\\n\\n[db]\\nhost = localhost\\nport = 5432\\n'\nassert parse_ini(t) == {'': {'a': '1'}, 'db': {'host': 'localhost', 'port': '5432'}}\nassert parse_ini('') == {}\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "shadowing_fix",
+      "category": "fix",
+      "prompt": "The function below shadows the built-in `sum` and crashes on the second call. Fix it, keeping the name `total`. Return only the corrected Python code.\n```python\ndef total(nums):\n    sum = 0\n    for n in nums:\n        sum = sum(nums)\n    return sum\n```",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "shadowing_fix",
+          "test": "assert total([1,2,3]) == 6\nassert total([]) == 0\nassert total([5]) == 5\nassert total([1,2,3]) == 6\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "longest_common_prefix",
+      "category": "algorithm",
+      "prompt": "Write `lcp(strs: list[str]) -> str` returning the longest common prefix of a list of strings, or '' if there is none. Empty list -> ''. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "longest_common_prefix",
+          "test": "assert lcp(['flower','flow','flight']) == 'fl'\nassert lcp(['dog','racecar']) == ''\nassert lcp([]) == ''\nassert lcp(['abc']) == 'abc'\nassert lcp(['','a']) == ''\nprint('ok')"
+        }
+      ]
+    },
+    {
+      "id": "retry_decorator",
+      "category": "class",
+      "prompt": "Write a decorator `retry(times)` that retries the wrapped function up to `times` total attempts when it raises, returning the first successful result and re-raising if all attempts fail. Return only the Python code.",
+      "checks": [
+        {
+          "kind": "python",
+          "label": "retry_decorator",
+          "test": "calls={'n':0}\n@retry(3)\ndef flaky():\n    calls['n']+=1\n    if calls['n']<3: raise ValueError('boom')\n    return 'ok'\nassert flaky()=='ok'\nassert calls['n']==3\n@retry(2)\ndef always():\n    raise RuntimeError('nope')\ntry:\n    always(); raise AssertionError('should raise')\nexcept RuntimeError: pass\nprint('ok')"
+        }
+      ]
+    }
+  ]
+}
