@@ -154,10 +154,16 @@
                 color: var(--faint); font-size: .72rem; }
   .fold .fbody { padding: 0 1.05rem 1rem; }
   .fold .fnote { font-size: .78rem; color: var(--muted); margin: 0 0 .5rem; }
-  /* A fold inside a fold reads as a subordinate, not a peer. */
-  .subfold { margin: 0; background: transparent; }
-  .subfold > summary { padding: .5rem .7rem; font-size: .7rem; }
-  .subfold .fbody { padding: 0 .7rem .7rem; }
+  /* A fold inside a fold reads as a subordinate, not a peer. It carried the
+     outer fold's border, which made it look like a separate box sitting inside
+     the panel. It shares the panel's surface now — one continuous card, with
+     only the code area itself a darker shade. */
+  .subfold {
+    margin: 0; background: var(--card); border: 0;
+    border-top: 1px solid var(--line); border-radius: 0;
+  }
+  .subfold > summary { padding: .5rem 0; font-size: .7rem; }
+  .subfold .fbody { padding: 0 0 .2rem; }
   .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
   .cfgbtn { font-family: var(--mono); font-size: .72rem; padding: .28rem .6rem;
             border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
