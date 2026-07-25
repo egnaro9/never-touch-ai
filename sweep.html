@@ -110,6 +110,7 @@
   #pad .nodebox { fill: var(--card); stroke: var(--line); }
   #pad .nodebox.term { stroke: var(--accent); }
   #pad .nodebox.sel  { stroke: var(--armed); }
+  #pad .nodebox.off  { stroke: var(--faint); stroke-dasharray: 4 3; }
   #pad .nlab { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
   #pad .nsub { font-family: var(--mono); font-size: 9px; fill: var(--faint); }
   #pad .port { fill: var(--accent); opacity: .85; cursor: crosshair; }
@@ -1383,8 +1384,10 @@ function writeShape(mutate, describe) {
   base.roles = base.roles || {};
   // Normalise a chain into the graph form first: editing a shape has to operate
   // on edges, and `pipeline` cannot express one.
+  let converted = false;
   if ((!base.graph || !Object.keys(base.graph).length) && (base.pipeline || []).length) {
     base.graph = Object.fromEntries(base.pipeline.map((r, i) => [r, i ? [base.pipeline[i - 1]] : []]));
+    converted = true;
   }
   base.graph = base.graph || {};
   try { mutate(base); } catch (e) { padSay(e.message, true); return false; }
@@ -1398,7 +1401,13 @@ function writeShape(mutate, describe) {
   $("config").value = JSON.stringify(obj, null, 2);
   // Programmatic assignment fires nothing, so tell the rest of the page itself.
   $("config").dispatchEvent(new Event("input"));
-  padSay(describe || "");
+  // A chain silently becoming a graph is data-preserving — asGraph already treats
+  // `pipeline` as sugar for exactly this — but it is still the user's chosen
+  // representation being rewritten, so it gets said out loud rather than noticed
+  // later in a diff.
+  padSay(converted
+    ? `${describe || "changed"} · rewrote \`pipeline\` as \`graph\` (same shape — a chain can't express branches)`
+    : (describe || ""));
   renderPad();
   return true;
 }
@@ -1419,7 +1428,15 @@ function padLayout(base) {
   tiers.forEach((tier, ti) => tier.forEach((n, ri) => {
     auto[n] = { x: PAD_M + ti * TIER_X, y: PAD_M + ri * ROW_Y };
   }));
-  return { g, auto, tiers };
+  // Roles that no topology references. They were invisible, which meant a role
+  // could exist in the config, never render, and be unreachable from the canvas
+  // — a way to lose track of work without anything being deleted. They are
+  // drawn detached, on their own row, so the picture is the whole truth.
+  const detached = Object.keys(base.roles || {}).filter((r) => !(r in g));
+  detached.sort().forEach((n, i) => {
+    auto[n] = { x: PAD_M + i * TIER_X, y: PAD_M + tiers.length * 0 + (tiers.length ? tiers[0].length : 0) * ROW_Y + ROW_Y };
+  });
+  return { g, auto, tiers, detached };
 }
 
 function padPoint(n, lay) { return padPos[n] || lay.auto[n] || { x: PAD_M, y: PAD_M }; }
@@ -1435,7 +1452,7 @@ function renderPad() {
   const base = obj.base;
   const lay = padLayout(base);
   if (!lay) { pad.innerHTML = ""; padSay("This graph is not runnable, so it can't be laid out.", true); return; }
-  const nodes = Object.keys(lay.g);
+  const nodes = [...Object.keys(lay.g), ...lay.detached];
   let terms = [];
   try { terms = terminalsOf(base); } catch {}
 
@@ -1449,24 +1466,31 @@ function renderPad() {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   let svg = "";
   // edges first so nodes sit on top
-  for (const child of nodes) {
+  for (const child of Object.keys(lay.g)) {
     for (const parent of lay.g[child]) {
       const a = padPoint(parent, lay), b = padPoint(child, lay);
       const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
       const mx = (x1 + x2) / 2;
       const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
       svg += `<path class="edge" d="${d}"></path>`;
-      svg += `<path class="edgehit" d="${d}" data-edge="${esc(parent)}|${esc(child)}"><title>click to cut ${esc(parent)} → ${esc(child)}</title></path>`;
+      // Two attributes, not one packed string: a role may legitimately contain
+      // "|", and "a|b|c" split on "|" resolved to the wrong pair — cutting an
+      // edge then mutated a graph entry the user never pointed at.
+      svg += `<path class="edgehit" d="${d}" data-parent="${esc(parent)}" data-child="${esc(child)}">` +
+             `<title>click to cut ${esc(parent)} → ${esc(child)}</title></path>`;
     }
   }
   for (const n of nodes) {
     const p = padPoint(n, lay);
     const role = base.roles[n] || {};
-    const cls = "nodebox" + (terms.includes(n) ? " term" : "") + (padSel === n ? " sel" : "");
+    const off = lay.detached.includes(n);
+    const cls = "nodebox" + (off ? " off" : terms.includes(n) ? " term" : "") +
+                (padSel === n ? " sel" : "");
     svg += `<g data-node="${esc(n)}" class="grab">` +
       `<rect class="${cls}" x="${p.x}" y="${p.y}" width="${NODE_W}" height="${NODE_H}" rx="2"></rect>` +
       `<text class="nlab" x="${p.x + 8}" y="${p.y + 15}">${esc(n)}</text>` +
-      `<text class="nsub" x="${p.x + 8}" y="${p.y + 28}">${esc(baseModelId(role.model || "—")).slice(0, 18)}</text>` +
+      `<text class="nsub" x="${p.x + 8}" y="${p.y + 28}">` +
+      `${off ? "detached" : esc(baseModelId(role.model || "—")).slice(0, 18)}</text>` +
       `<circle class="port" data-port="${esc(n)}" cx="${p.x + NODE_W}" cy="${p.y + NODE_H / 2}" r="5"></circle>` +
       `</g>`;
   }
@@ -1486,10 +1510,10 @@ function padXY(evt) {
 $("pad").addEventListener("pointerdown", (e) => {
   const portEl = e.target.closest("[data-port]");
   const nodeEl = e.target.closest("[data-node]");
-  const edgeEl = e.target.closest("[data-edge]");
+  const edgeEl = e.target.closest("[data-parent]");
 
   if (edgeEl) {                                   // cut an edge
-    const [parent, child] = edgeEl.dataset.edge.split("|");
+    const parent = edgeEl.dataset.parent, child = edgeEl.dataset.child;
     writeShape((base) => {
       base.graph[child] = (base.graph[child] || []).filter((d) => d !== parent);
     }, `cut ${parent} → ${child}`);
@@ -1535,6 +1559,10 @@ $("pad").addEventListener("pointerup", (e) => {
     if (target && target.dataset.node !== from) {
       const child = target.dataset.node;
       writeShape((base) => {
+        // A detached node has no graph entry yet. Feeding something from it has
+        // to re-attach it as a source, or orderOf rejects the edge as pointing
+        // at a node that is "not in the graph".
+        if (!(from in base.graph)) base.graph[from] = [];
         const deps = base.graph[child] = base.graph[child] || [];
         if (deps.includes(from)) throw new Error(`${from} already feeds ${child}`);
         deps.push(from);
@@ -1571,9 +1599,12 @@ document.addEventListener("keydown", (e) => {
   writeShape((base) => {
     const kids = Object.keys(base.graph).filter((k) => (base.graph[k] || []).includes(n));
     if (kids.length) throw new Error(`${n} still feeds ${kids.join(", ")} — cut those first`);
+    // DETACH, do not delete. This used to `delete base.roles[n]`, which threw
+    // away a hand-written system prompt the canvas never displayed — the exact
+    // thing this editor's narrow scope exists to make impossible. Removing the
+    // role body is the textarea's job, because that is where you can see it.
     delete base.graph[n];
-    delete base.roles[n];      // the role goes too, or the config keeps a ghost
-  }, `deleted ${n}`);
+  }, `detached ${n} — its prompt is untouched; delete the role in the config to remove it`);
   padSel = null;
 });
 
