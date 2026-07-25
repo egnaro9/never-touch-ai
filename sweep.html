@@ -114,7 +114,14 @@
   #pad .nlab { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
   #pad .nsub { font-family: var(--mono); font-size: 9px; fill: var(--faint); }
   #pad .port { fill: var(--accent); opacity: .85; cursor: crosshair; }
-  #pad .ghost { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+  /* The ghost follows the cursor, so it sat directly under elementFromPoint on
+     drop: the hit test returned the ghost, closest("[data-node]") was null, and
+     the edge was never created. Drag-to-connect — the whole point of the pad —
+     silently did nothing. Decorative marks must never be hit-testable; only
+     .edgehit and the nodes are. */
+  #pad .ghost { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none;
+                pointer-events: none; }
+  #pad .edge { pointer-events: none; }
   #pad text { pointer-events: none; user-select: none; }
   #pad .grab { cursor: grab; }
 
