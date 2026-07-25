@@ -175,6 +175,16 @@
   }
   .fbody > .subfold > summary { padding: .7rem 0 .55rem; font-size: .7rem; }
   .fbody > .subfold .fbody { padding: 0; }
+  .shapes { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+            gap: .5rem; margin: 0 0 .9rem; }
+  .shape-card { border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+                padding: .55rem .65rem; cursor: pointer; text-align: left; }
+  .shape-card:hover { border-color: var(--accent); }
+  .shape-card .sh { display: flex; align-items: baseline; gap: .4rem; }
+  .shape-card .sn { font-family: var(--mono); font-size: .78rem; color: var(--ink); font-weight: 600; }
+  .shape-card .sc { font-family: var(--mono); font-size: .66rem; color: var(--accent); margin-left: auto; }
+  .shape-card .sw { font-size: .74rem; color: var(--muted); margin-top: .3rem; line-height: 1.45; }
+
   .cfgio { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: 0 0 .5rem; }
   .cfgbtn { font-family: var(--mono); font-size: .72rem; padding: .28rem .6rem;
             border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
@@ -570,6 +580,13 @@
           <summary>Config &amp; sweep <span class="fsub">the JSON behind the shape</span></summary>
           <div class="fbody">
             <p class="fnote">A base config plus axes to vary → the full matrix is generated for you.</p>
+
+            <!-- SHAPES. A gallery beats a tutorial: a walkthrough goes stale
+                 every time the UI moves, while these load something real you can
+                 draw, run and inspect. Each ships an axis, so loading one gives
+                 you a comparison rather than one number with nothing to beat. -->
+            <div class="shapes" id="shapePresets"></div>
+
             <div class="cfgio">
               <label class="cfgbtn" for="cfgFile">load a harness&hellip;</label>
               <input type="file" id="cfgFile" accept=".json,application/json" hidden />
@@ -1048,6 +1065,113 @@ function callMock(role, userContent, deps) {
 // base_url. Browser-callability is a vendor policy, not a capability — the ones
 // that refuse are labelled, because finding out by watching a sweep fail is an
 // expensive way to learn it.
+// SHAPES — the harness patterns worth knowing, each one loadable.
+//
+// Named for what they DO, with the call count that makes the trade-off legible.
+// Deliberately NOT labelled "industry standard" or "most popular": these are
+// well-known arrangements, and which one wins on YOUR tasks is the question the
+// tool exists to answer rather than assume.
+//
+// Every preset ships a topology axis, so loading one gives you a comparison
+// against the cheaper shapes rather than a single number with nothing to beat.
+const M_BIG = "claude-opus-4-8", M_MID = "claude-sonnet-5", M_SMALL = "claude-haiku-4-5";
+const IMPL = "You are an implementer. Given the task, produce the final, complete answer or code.";
+
+const SHAPE_PRESETS = [
+  {
+    id: "solo",
+    name: "Single pass",
+    calls: "1 call",
+    why: "One model, one shot. The baseline every other shape has to beat — if it wins here, nothing else is worth paying for.",
+    cfg: () => ({
+      base: { name: "solo", roles: { drafter: { model: M_MID, system: IMPL, max_tokens: 900 } },
+              pipeline: [], graph: { drafter: [] } },
+      axes: [{ kind: "role", role: "drafter", field: "model", values: [M_SMALL, M_MID, M_BIG] }],
+    }),
+  },
+  {
+    id: "plan",
+    name: "Plan, then do",
+    calls: "2 calls",
+    why: "A cheap planner breaks the task down, an implementer executes the plan. Buys structure on long tasks; pure overhead on short ones.",
+    cfg: () => ({
+      base: { name: "plan", roles: {
+                planner: { model: M_BIG, system: "Break the task into a short, numbered plan of concrete steps. Do not implement it.", max_tokens: 400 },
+                drafter: { model: M_MID, system: IMPL, max_tokens: 900 } },
+              pipeline: [], graph: { planner: [], drafter: ["planner"] } },
+      axes: [{ kind: "topology", values: [{ drafter: [] }, { planner: [], drafter: ["planner"] }] }],
+    }),
+  },
+  {
+    id: "critic",
+    name: "Draft, critique, revise",
+    calls: "3 calls",
+    why: "The model reviews its own work and rewrites it. Catches slips a single pass makes; can also talk itself out of a correct answer.",
+    cfg: () => ({
+      base: { name: "critic", roles: {
+                drafter: { model: M_MID, system: IMPL, max_tokens: 900 },
+                critic: { model: M_BIG, system: "Review the answer for correctness. List concrete defects only. If it is correct, say CORRECT.", max_tokens: 400 },
+                reviser: { model: M_MID, system: "Given the answer and a critique, return the corrected final answer only.", max_tokens: 900 } },
+              pipeline: [], graph: { drafter: [], critic: ["drafter"], reviser: ["drafter", "critic"] } },
+      axes: [{ kind: "topology", values: [
+                { drafter: [] },
+                { drafter: [], critic: ["drafter"], reviser: ["drafter", "critic"] }] }],
+    }),
+  },
+  {
+    id: "panel",
+    name: "Two models, one judge",
+    calls: "4 calls",
+    why: "Different models draft in parallel and a third picks the winner. Trades cost for a second opinion from a different lab.",
+    cfg: () => ({
+      base: { name: "panel", roles: {
+                planner: { model: M_BIG, system: "Break the task into a short, numbered plan of concrete steps. Do not implement it.", max_tokens: 400 },
+                draft_a: { model: M_MID, system: IMPL, max_tokens: 900 },
+                draft_b: { model: M_SMALL, system: IMPL, max_tokens: 900 },
+                judge: { model: M_BIG, system: "You are given candidate solutions, each tagged with its author. Return the better one verbatim — only the final answer, no commentary.", max_tokens: 900 } },
+              pipeline: [], graph: { planner: [], draft_a: ["planner"], draft_b: ["planner"], judge: ["draft_a", "draft_b"] } },
+      axes: [{ kind: "topology", values: [
+                { draft_a: [] },
+                { planner: [], draft_a: ["planner"] },
+                { planner: [], draft_a: ["planner"], draft_b: ["planner"], judge: ["draft_a", "draft_b"] }] }],
+    }),
+  },
+  {
+    id: "bestof",
+    name: "Best of three",
+    calls: "4 calls",
+    why: "The SAME model drafts three times and a judge picks. Isolates how much of the gain is sampling variance rather than model quality.",
+    cfg: () => ({
+      base: { name: "bestof", roles: {
+                a: { model: M_MID, system: IMPL, max_tokens: 900 },
+                b: { model: M_MID, system: IMPL, max_tokens: 900 },
+                c: { model: M_MID, system: IMPL, max_tokens: 900 },
+                judge: { model: M_BIG, system: "You are given candidate solutions, each tagged with its author. Return the best one verbatim — only the final answer, no commentary.", max_tokens: 900 } },
+              pipeline: [], graph: { a: [], b: [], c: [], judge: ["a", "b", "c"] } },
+      axes: [{ kind: "topology", values: [{ a: [] }, { a: [], b: [], c: [], judge: ["a", "b", "c"] }] }],
+    }),
+  },
+  {
+    id: "free",
+    name: "Dry run",
+    calls: "0 calls",
+    why: "Every role on a mock substrate. Exercises the whole shape, the scoring path and the comparison without spending anything — the right place to start.",
+    cfg: () => ({
+      base: { name: "dryrun", substrates: { m: { name: "m", shape: "mock" } },
+              roles: {
+                planner: { model: M_BIG, substrate: "m", system: "plan", max_tokens: 400 },
+                draft_a: { model: M_MID, substrate: "m", system: IMPL, max_tokens: 900 },
+                draft_b: { model: M_SMALL, substrate: "m", system: IMPL, max_tokens: 900 },
+                judge: { model: M_BIG, substrate: "m", system: "judge", max_tokens: 900 } },
+              pipeline: [], graph: { planner: [], draft_a: ["planner"], draft_b: ["planner"], judge: ["draft_a", "draft_b"] } },
+      axes: [{ kind: "topology", values: [
+                { draft_a: [] },
+                { planner: [], draft_a: ["planner"] },
+                { planner: [], draft_a: ["planner"], draft_b: ["planner"], judge: ["draft_a", "draft_b"] }] }],
+    }),
+  },
+];
+
 const PROVIDER_PRESETS = {
   anthropic:   { label: "Anthropic",                        shape: "anthropic", base: "https://api.anthropic.com" },
   gemini:      { label: "Google Gemini",                    shape: "gemini",    base: "" },
@@ -2611,6 +2735,40 @@ readJsonFile($("cfgFile"), (text, name) => {
   $("config").dispatchEvent(new Event("input"));
   padSay(`loaded ${name}`);
 });
+
+// Loading a preset goes through the same validation a pasted config does, so a
+// preset that would not run is caught here rather than by the user.
+(() => {
+  const host = $("shapePresets");
+  if (!host) return;
+  for (const p of SHAPE_PRESETS) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "shape-card";
+    b.innerHTML = '<div class="sh"><span class="sn"></span><span class="sc"></span></div><div class="sw"></div>';
+    b.querySelector(".sn").textContent = p.name;
+    b.querySelector(".sc").textContent = p.calls;
+    b.querySelector(".sw").textContent = p.why;
+    b.addEventListener("click", () => {
+      const before = $("config").value;
+      const text = JSON.stringify(p.cfg(), null, 2);
+      $("config").value = text;
+      try {
+        const c = parseConfig();
+        expandSweep(c.base, c.axes).forEach((x) => orderOf(x));
+      } catch (e) {
+        $("config").value = before;
+        padSay(`the "${p.name}" preset did not validate: ${e.message}`, true);
+        return;
+      }
+      $("config").dispatchEvent(new Event("input"));
+      padPos = {}; savePos();          // its own shape, not the last one's layout
+      padZoom = 1; padPanX = 0; padPanY = 0;
+      renderPad();
+      padSay(`loaded "${p.name}" — ${p.calls} per task, swept against the cheaper shapes`);
+    });
+    host.appendChild(b);
+  }
+})();
 
 $("cfgSave").addEventListener("click", () => {
   let name = "harness";
