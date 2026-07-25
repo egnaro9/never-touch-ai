@@ -204,6 +204,33 @@
   .mx-fail { background: rgba(248,113,113,.13); color: var(--error); }
 
   .empty { color: var(--muted); font-family: var(--mono); font-size: .82rem; padding: .5rem 0; }
+  .asst-rule { font-family: var(--mono); font-size: .7rem; color: var(--muted);
+    display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; margin: 0 0 .7rem;
+    border-left: 2px solid var(--armed); padding-left: .6rem; }
+  .asst-rule .v { width: 6px; height: 6px; border-radius: 50%; background: var(--armed); }
+  .asst-rule b { color: var(--armed); }
+  .asst-log { max-height: 260px; overflow: auto; font-size: .84rem; }
+  .asst-log .turn { padding: .45rem 0; border-bottom: 1px dashed var(--line); }
+  .asst-log .turn .who { font-family: var(--mono); font-size: .66rem; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--faint); display: block; margin-bottom: .2rem; }
+  .asst-log .turn.you .who { color: var(--muted); }
+  .asst-log .turn.ai .who { color: var(--accent); }
+  .asst-log .turn p { margin: 0 0 .4rem; color: var(--ink); white-space: pre-wrap; }
+  .asst-in { display: flex; gap: .5rem; margin-top: .7rem; }
+  .asst-in input { flex: 1 1 auto; }
+  .asst-in button { font-family: var(--mono); font-size: .8rem; padding: .4rem .9rem;
+    border: 1px solid var(--accent-line); border-radius: 2px; background: var(--accent-soft);
+    color: var(--accent); cursor: pointer; }
+  .asst-in button:disabled { border-color: var(--line); color: var(--faint); background: transparent; cursor: not-allowed; }
+  .proposal { border: 1px solid var(--accent-line); background: var(--accent-soft);
+    border-radius: 2px; padding: .7rem .8rem; margin: .6rem 0 0; }
+  .proposal .ph { font-family: var(--mono); font-size: .72rem; color: var(--accent); margin-bottom: .4rem; }
+  .proposal .pd { font-family: var(--mono); font-size: .74rem; color: var(--muted); white-space: pre-wrap;
+    max-height: 150px; overflow: auto; }
+  .proposal .pact { display: flex; gap: .5rem; margin-top: .6rem; }
+  .proposal button { font-family: var(--mono); font-size: .76rem; padding: .35rem .8rem;
+    border: 1px solid var(--line); border-radius: 2px; background: var(--raised); color: var(--ink); cursor: pointer; }
+  .proposal button.apply { border-color: var(--armed); color: var(--armed); }
   .paired { margin-top: 1.1rem; }
   .paired h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 700; }
   .pair { border-left: 2px solid var(--line); padding: .35rem 0 .35rem .7rem; margin: .45rem 0;
@@ -310,6 +337,27 @@
             <svg id="pad" role="img" aria-label="harness topology"></svg>
           </div>
           <div class="msg" id="padMsg"></div>
+        </div>
+
+        <!-- ASSISTANT. Explains and proposes; it never grades, and it never
+             applies its own output. Its proposals go through the SAME validation
+             a human drag gets, and land as a diff you accept. -->
+        <div class="card">
+          <h2>Assistant</h2>
+          <div class="asst-rule">
+            <span class="v"></span>
+            <b>No model grades anything here.</b>
+            <span>scoring, verdicts and the paired test stay deterministic — this only explains and proposes</span>
+          </div>
+          <div class="asst-log" id="asstLog"><div class="empty">Ask what a config does, or describe the comparison you want.</div></div>
+          <div id="asstProposal"></div>
+          <div class="asst-in">
+            <input class="txt" id="asstInput" type="text" spellcheck="false"
+                   placeholder="e.g. compare a cheap solo drafter against a two-model panel" />
+            <button type="button" id="asstSend">ask</button>
+          </div>
+          <div class="runline" id="asstCost">costs your key &middot; nothing spent yet</div>
+          <div class="msg" id="asstMsg"></div>
         </div>
 
         <div class="card">
@@ -1569,6 +1617,168 @@ function syncPadButtons() {
 }
 
 $("config").addEventListener("input", () => renderPad());
+
+// ---------------------------------------------------------------------------
+// ASSISTANT — explains and proposes. It is not in the grading path.
+//
+// The product's claim is that a score is a function of the output, so no model
+// may touch a verdict. This one never sees a score, never runs a sweep, and
+// never applies its own output: a proposal is validated by the SAME functions a
+// human gesture goes through (parseConfig -> expandSweep -> orderOf) and then
+// waits for you to accept it. A model that cannot write an unrunnable config
+// and cannot approve its own work is a helper, not a judge.
+// ---------------------------------------------------------------------------
+const ASSISTANT_MODEL = "claude-opus-4-8";
+let asstTurns = [];          // [{role:"user"|"assistant", content:string}]
+let asstSpent = 0;
+let asstPending = null;      // a validated proposal awaiting accept/discard
+
+const ASSISTANT_SYSTEM = `You help a user of a harness-testing tool shape and understand
+HARNESS CONFIGS. A config is JSON: base.roles (each with model, system, max_tokens,
+optional substrate), base.graph (role -> the roles feeding it; a node with no parents
+gets the task, terminals produce the answer), base.substrates, and axes that sweep
+role/topology/substrate to produce a matrix of configs.
+
+You NEVER grade, score or judge output. That is done by fixed predicates, deliberately
+without a model. If asked to judge quality, say that is the deterministic scorer's job.
+
+Answer in JSON only, matching:
+{"reply": "<plain text, 1-4 sentences, no markdown>",
+ "config": <a COMPLETE config object {base:{...}, axes:[...]} or null>}
+
+Include "config" ONLY when proposing a change; otherwise null. When you do:
+- keep every role's existing "system" prompt verbatim unless asked to change it
+- every graph parent must be a node in the graph, and the graph must be acyclic
+- prefer models already present in the config; do not invent model ids
+Be concise and concrete. Say what a shape costs in calls.`;
+
+function asstSay(who, text) {
+  const log = $("asstLog");
+  if (log.querySelector(".empty")) log.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "turn " + (who === "you" ? "you" : "ai");
+  d.innerHTML = `<span class="who">${who}</span><p></p>`;
+  d.querySelector("p").textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderProposal() {
+  const host = $("asstProposal");
+  if (!asstPending) { host.innerHTML = ""; return; }
+  host.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "proposal";
+  box.innerHTML = `<div class="ph">proposed config — ${escapeHtml(asstPending.summary)}</div>` +
+                  `<div class="pd"></div><div class="pact"></div>`;
+  box.querySelector(".pd").textContent = asstPending.text.slice(0, 1200);
+  const apply = document.createElement("button");
+  apply.className = "apply"; apply.textContent = "apply";
+  apply.addEventListener("click", () => {
+    $("config").value = asstPending.text;
+    $("config").dispatchEvent(new Event("input"));
+    asstPending = null; renderProposal();
+    $("asstMsg").className = "msg ok"; $("asstMsg").textContent = "applied — check the shape above";
+  });
+  const drop = document.createElement("button");
+  drop.textContent = "discard";
+  drop.addEventListener("click", () => { asstPending = null; renderProposal(); });
+  box.querySelector(".pact").append(apply, drop);
+  host.appendChild(box);
+}
+
+async function askAssistant() {
+  const inp = $("asstInput"), msg = $("asstMsg");
+  const q = inp.value.trim();
+  if (!q) return;
+  if (!API_KEY) { msg.className = "msg err"; msg.textContent = "Paste your Anthropic key first — the assistant spends it, like any other call."; return; }
+  msg.className = "msg"; msg.textContent = "";
+  inp.value = ""; asstSay("you", q);
+  $("asstSend").disabled = true; $("asstSend").textContent = "…";
+
+  // Give it the CURRENT config so "what does this do" has an antecedent.
+  const cfgText = $("config").value.slice(0, 6000);
+  asstTurns.push({ role: "user", content: `Current config:\n${cfgText}\n\nUser: ${q}` });
+
+  const role = { model: ASSISTANT_MODEL, system: ASSISTANT_SYSTEM, max_tokens: 1500 };
+  let r;
+  try {
+    r = await callProviderChat(role, asstTurns.slice(-6));
+  } finally {
+    $("asstSend").disabled = false; $("asstSend").textContent = "ask";
+  }
+  if (!r.ok) { msg.className = "msg err"; msg.textContent = r.error || "the assistant call failed"; return; }
+
+  // Metered like everything else. The assistant is not free and does not pretend to be.
+  const cost = costOf(ASSISTANT_MODEL, r.input_tokens, r.output_tokens);
+  if (cost !== null) asstSpent += cost;
+  $("asstCost").innerHTML = cost === null
+    ? `costs your key · <b>cost unknown</b> for ${escapeHtml(ASSISTANT_MODEL)}`
+    : `costs your key · <b>${usd(asstSpent)}</b> spent on the assistant so far`;
+
+  let parsed = null;
+  try { parsed = JSON.parse((r.text || "").replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch {}
+  if (!parsed) { asstSay("assistant", (r.text || "").slice(0, 1200)); return; }
+  asstTurns.push({ role: "assistant", content: r.text });
+  asstSay("assistant", parsed.reply || "(no reply)");
+
+  if (!parsed.config) { asstPending = null; renderProposal(); return; }
+
+  // Validate through the SAME path a human gesture takes. A proposal that would
+  // not run is refused here rather than offered and blamed on the user later.
+  const text = JSON.stringify(parsed.config, null, 2);
+  try {
+    const obj = JSON.parse(text);
+    if (!obj.base || !obj.base.roles) throw new Error("a config needs base.roles");
+    if (typeof obj.base.name !== "string" || !obj.base.name.trim()) throw new Error("a config needs base.name");
+    const configs = expandSweep(obj.base, obj.axes || []);
+    configs.forEach((c) => orderOf(c));
+    asstPending = { text, summary: `${configs.length} config${configs.length === 1 ? "" : "s"} · ` +
+                                   configs.map((c) => shapeLabel(c)).join(", ") };
+  } catch (e) {
+    asstPending = null;
+    msg.className = "msg err";
+    msg.textContent = `the assistant proposed a config that would not run (${e.message}) — discarded, nothing changed`;
+  }
+  renderProposal();
+}
+
+// The provider call, multi-turn. callProvider takes a single string, so this is
+// the same request shape with a message list — same key rules, same headers.
+async function callProviderChat(role, turns) {
+  const key = API_KEY;
+  const t0 = performance.now();
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key,
+                 "anthropic-version": "2023-06-01",
+                 "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({ model: role.model, max_tokens: role.max_tokens,
+                             system: role.system, messages: turns }),
+    });
+    const latency_ms = Math.round(performance.now() - t0);
+    if (!res.ok) {
+      const body = await res.text();
+      return { ok: false, latency_ms, input_tokens: 0, output_tokens: 0, text: "",
+               error: `HTTP ${res.status}: ${body.slice(0, 200)}` };
+    }
+    const j = await res.json();
+    const text = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    return { ok: true, latency_ms, text,
+             input_tokens: (j.usage && j.usage.input_tokens) || 0,
+             output_tokens: (j.usage && j.usage.output_tokens) || 0 };
+  } catch (e) {
+    return { ok: false, latency_ms: Math.round(performance.now() - t0), input_tokens: 0,
+             output_tokens: 0, text: "", error: `the browser blocked the call (${e.message})` };
+  }
+}
+
+$("asstSend").addEventListener("click", () => { askAssistant().catch((e) => {
+  $("asstMsg").className = "msg err"; $("asstMsg").textContent = `assistant stopped: ${(e && e.message) || e}`;
+  $("asstSend").disabled = false; $("asstSend").textContent = "ask";
+}); });
+$("asstInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("asstSend").click(); });
 
 updateEstimate();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
