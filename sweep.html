@@ -185,7 +185,11 @@
               <input class="txt" id="runs" type="number" min="1" max="20" value="3" />
             </label>
             <label class="field">
-              <span>Spend cap (USD)</span>
+              <!-- "cap" reads as a hard limit, and it is not one: the check runs
+                   BETWEEN calls, so the call in flight when the cap is crossed
+                   still bills in full. Say so rather than let the word imply a
+                   guarantee the code cannot make. -->
+              <span>Spend cap (USD) <span style="opacity:.7">— checked between calls</span></span>
               <input class="txt" id="budget" type="number" min="0" step="0.05" value="0.50" />
             </label>
           </div>
@@ -909,6 +913,32 @@ async function runSweep() {
   const budget = { cap: Number.isFinite(rawCap) && rawCap >= 0 ? rawCap : Infinity,
                    spent: 0, hypothetical: 0 };
   if (budget.cap === 0) { msg.className = "msg warn"; msg.textContent = "Spend cap is $0.00 — nothing will run. Raise the cap."; return; }
+
+  // A spend cap can only be enforced in a currency the tool can actually compute.
+  // costOf returns null for an unpriced model, and the runtime coerced that null
+  // to 0 — so an unpriced node advanced `budget.spent` by exactly $0.00, the cap
+  // check never fired for it, and a sweep of unpriced models ran to completion
+  // spending real money while reporting "spent $0.00". Verified: a 4-node chain
+  // on an unpriced model under a $0.01 cap ran every node without halting.
+  //
+  // Refuse rather than pretend. An explicitly uncapped run is still allowed —
+  // that user has opted out of the guarantee knowingly.
+  const unpriced = [...new Set(configs.flatMap((c) =>
+    orderOf(c)
+      .filter((n) => {
+        const sn = c.roles[n].substrate;
+        const isMock = sn && subs[sn] && subs[sn].shape === "mock";
+        return !isMock && !priceFor(c.roles[n].model);   // mocks spend nothing
+      })
+      .map((n) => c.roles[n].model)))];
+  if (unpriced.length && Number.isFinite(budget.cap)) {
+    msg.className = "msg err";
+    msg.textContent =
+      `No price on file for ${unpriced.join(", ")} — a spend cap cannot be enforced ` +
+      `on a model this tool cannot price, so it would run uncapped while reporting ` +
+      `$0.00. Add the model to PRICING, or clear the cap field to run uncapped.`;
+    return;
+  }
 
   agg.clear(); matrix.clear();
   CONFIG_ORDER = configs.map((c) => c.name);
