@@ -1,5 +1,5 @@
 """
-Never Touch AI - backend
+AI Crash Test - backend
 ========================
 This server NEVER sees an API key and NEVER makes a provider call.
 
@@ -327,7 +327,7 @@ def assert_no_credentials(payload: Any, path: str = "") -> None:
 # App
 # ----------------------------------------------------------------------------
 
-app = FastAPI(title="Never Touch AI - backend", version="0.1.0")
+app = FastAPI(title="AI Crash Test - backend", version="0.1.0")
 
 # ---------------------------------------------------------------------------
 # CORS is a SECURITY control here, not a convenience one, because /score
