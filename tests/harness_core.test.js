@@ -1,0 +1,192 @@
+// Tests for the pure half of the Harness Builder.
+//
+// Every case here is a bug that actually shipped and was found by hand in a
+// browser. That is the point of extracting harness_core.js: these were only
+// reachable by driving a page, so nothing stopped them coming back.
+//
+//   cd "harness config test/files" && node --test tests/
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const core = require("../harness_core.js");
+
+const {
+  PRICING, PRICING_VERIFIED, baseModelId, priceFor, costOf,
+  asGraph, orderOf, terminalsOf, shapeLabel, expandSweep,
+} = core;
+
+const role = (model) => ({ model, system: "", max_tokens: 900 });
+const cfg = (graph, roles) => ({
+  name: "t",
+  roles: roles || Object.fromEntries(Object.keys(graph).map((n) => [n, role("claude-opus-4-8")])),
+  pipeline: [],
+  graph,
+});
+
+// ---------------------------------------------------------------------------
+// PRICING
+// ---------------------------------------------------------------------------
+test("Sonnet 5 is introductory priced through 2026-08-31 and standard after", () => {
+  // Shipped as a flat $3/$15, which overstated it by 50% for the whole intro
+  // window. A price is a dated fact, so a constant is wrong on one side of it.
+  assert.deepEqual(priceFor("claude-sonnet-5", "2026-07-24"), { until: "2026-08-31", in: 2, out: 10 });
+  assert.deepEqual(priceFor("claude-sonnet-5", "2026-08-31"), { until: "2026-08-31", in: 2, out: 10 },
+    "the last intro day is inclusive");
+  assert.deepEqual(priceFor("claude-sonnet-5", "2026-09-01"), { in: 3, out: 15 });
+  assert.equal(costOf("claude-sonnet-5", 1e6, 1e6, "2026-07-24"), 12);
+  assert.equal(costOf("claude-sonnet-5", 1e6, 1e6, "2026-09-01"), 18);
+});
+
+test("a dated model id resolves to the same price as its undated form", () => {
+  // The table was keyed on claude-haiku-4-5-20251001, so the ordinary form
+  // missed the lookup and a fully priced model displayed "cost unknown".
+  assert.equal(baseModelId("claude-haiku-4-5-20251001"), "claude-haiku-4-5");
+  assert.deepEqual(priceFor("claude-haiku-4-5-20251001"), priceFor("claude-haiku-4-5"));
+  assert.notEqual(priceFor("claude-haiku-4-5"), null);
+});
+
+test("an unknown model prices as null, never as zero", () => {
+  // Returning 0 made an unknown model look free, which then won the "cheapest"
+  // pill and could top a leaderboard sorted by cost.
+  assert.equal(priceFor("gpt-4o-mini"), null, "delisted models stay unpriced rather than guessed");
+  assert.equal(costOf("no-such-model", 1e6, 1e6), null);
+  assert.notEqual(costOf("no-such-model", 1e6, 1e6), 0);
+});
+
+test("the rate card carries the date it was verified", () => {
+  assert.match(PRICING_VERIFIED, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Object.keys(PRICING).length > 5);
+});
+
+// ---------------------------------------------------------------------------
+// GRAPH
+// ---------------------------------------------------------------------------
+test("a pipeline chain compiles to the same graph as writing it out", () => {
+  const chain = { name: "t", roles: { a: role("m"), b: role("m"), c: role("m") }, pipeline: ["a", "b", "c"], graph: {} };
+  assert.deepEqual(asGraph(chain), { a: [], b: ["a"], c: ["b"] });
+  assert.deepEqual(orderOf(chain), ["a", "b", "c"]);
+});
+
+test("graph wins when both graph and pipeline are set", () => {
+  const both = { name: "t", roles: { a: role("m"), b: role("m") }, pipeline: ["b", "a"], graph: { a: [], b: ["a"] } };
+  assert.deepEqual(asGraph(both), { a: [], b: ["a"] });
+});
+
+test("a cycle is refused by name rather than hanging", () => {
+  assert.throws(() => orderOf(cfg({ a: ["b"], b: ["a"] })), /cycle among: a,b/);
+});
+
+test("an edge pointing at a node not in the graph is refused", () => {
+  // A topology AXIS could produce exactly this, and it used to expand cleanly
+  // and then throw much later from a place where nothing caught it.
+  assert.throws(() => orderOf(cfg({ a: [], b: ["ghost"] })), /'b' depends on 'ghost'/);
+});
+
+test("a graph node with no matching role is refused", () => {
+  const bad = { name: "t", roles: { a: role("m") }, pipeline: [], graph: { a: [], b: [] } };
+  assert.throws(() => orderOf(bad), /'b' has no matching role/);
+});
+
+test("a diamond orders correctly and has exactly one terminal", () => {
+  const d = cfg({ a: [], b: ["a"], c: ["a"], d: ["b", "c"] });
+  const order = orderOf(d);
+  assert.ok(order.indexOf("a") < order.indexOf("b"));
+  assert.ok(order.indexOf("b") < order.indexOf("d"));
+  assert.ok(order.indexOf("c") < order.indexOf("d"));
+  assert.deepEqual(terminalsOf(d), ["d"]);
+  assert.equal(shapeLabel(d), "a→[b|c]→d", "the label shows the fan-out a chain cannot express");
+});
+
+test("a fan-out with no join has several terminals", () => {
+  assert.deepEqual(terminalsOf(cfg({ a: [], b: ["a"], c: ["a"] })), ["b", "c"]);
+});
+
+// ---------------------------------------------------------------------------
+// SWEEP EXPANSION
+// ---------------------------------------------------------------------------
+test("no axes expands to exactly the base config", () => {
+  const base = cfg({ a: [], b: ["a"] });
+  const out = expandSweep(base, []);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, "t", "the base keeps its own name when nothing varies");
+  assert.deepEqual(out[0].graph, base.graph);
+});
+
+test("a role axis produces one config per value and leaves other roles alone", () => {
+  const base = cfg({ a: [], b: ["a"] });
+  const out = expandSweep(base, [{ kind: "role", role: "a", field: "model", values: ["m1", "m2"] }]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out.map((c) => c.roles.a.model), ["m1", "m2"]);
+  assert.equal(out[0].roles.b.model, "claude-opus-4-8", "the untouched role is untouched");
+  assert.notEqual(out[0].name, out[1].name, "configs must be distinguishable by name");
+});
+
+test("two axes produce the full cartesian product", () => {
+  const base = cfg({ a: [], b: ["a"] });
+  const out = expandSweep(base, [
+    { kind: "role", role: "a", field: "model", values: ["m1", "m2"] },
+    { kind: "role", role: "b", field: "model", values: ["m3", "m4", "m5"] },
+  ]);
+  assert.equal(out.length, 6);
+  assert.equal(new Set(out.map((c) => c.name)).size, 6, "every config gets a distinct name");
+});
+
+test("a topology axis can vary the shape itself", () => {
+  const base = cfg({ a: [], b: ["a"], c: ["b"] });
+  const out = expandSweep(base, [{ kind: "topology", values: [["a"], { a: [], b: ["a"], c: ["a"] }] }]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(orderOf(out[0]), ["a"], "the chain form sets a one-node pipeline");
+  assert.deepEqual(terminalsOf(out[1]), ["b", "c"], "the graph form can fan out");
+});
+
+test("an axis-produced dangling edge is refused AT EXPANSION", () => {
+  // The defect this exists to prevent: expandSweep validated graph KEYS but not
+  // parent arrays, so this expanded fine and blew up later inside runSweep,
+  // outside any try/catch — the user clicked Run and got total silence.
+  const base = cfg({ a: [], b: ["a"] });
+  assert.throws(
+    () => expandSweep(base, [{ kind: "topology", values: [{ a: [], b: ["ghost"] }] }]),
+    /not valid.*depends on 'ghost'/s,
+  );
+});
+
+test("an axis-introduced cycle is refused at expansion", () => {
+  const base = cfg({ a: [], b: ["a"] });
+  assert.throws(
+    () => expandSweep(base, [{ kind: "topology", values: [{ a: ["b"], b: ["a"] }] }]),
+    /not valid.*cycle/s,
+  );
+});
+
+test("the refusal names which config failed, not just that one did", () => {
+  // shapeLabel returns "invalid-graph" for anything broken, so labelling the
+  // error with it said only that something was wrong, never which value to fix.
+  const base = cfg({ a: [], b: ["a"] });
+  try {
+    expandSweep(base, [{ kind: "topology", values: [{ a: [], b: ["a"] }, { a: [], b: ["ghost"] }] }]);
+    assert.fail("expected a refusal");
+  } catch (e) {
+    assert.match(e.message, /config #2 of 2/, "the position locates the offending axis value");
+  }
+});
+
+test("a topology axis referencing an unknown role is refused", () => {
+  const base = cfg({ a: [], b: ["a"] });
+  assert.throws(() => expandSweep(base, [{ kind: "topology", values: [["a", "nope"]] }]), /unknown roles/);
+});
+
+test("a substrate axis assigns the substrate and refuses an undefined one", () => {
+  const base = { ...cfg({ a: [], b: ["a"] }), substrates: { s1: { name: "s1", shape: "openai" } } };
+  const out = expandSweep(base, [{ kind: "substrate", role: "a", values: ["s1"] }]);
+  assert.equal(out[0].roles.a.substrate, "s1");
+  assert.throws(() => expandSweep(base, [{ kind: "substrate", role: "a", values: ["nope"] }]), /not defined/);
+});
+
+test("expansion does not mutate the base config", () => {
+  // Axes mutate a clone; sharing state across configs would silently make every
+  // result depend on the order they were generated in.
+  const base = cfg({ a: [], b: ["a"] });
+  const snapshot = JSON.stringify(base);
+  expandSweep(base, [{ kind: "role", role: "a", field: "model", values: ["m1", "m2"] }]);
+  assert.equal(JSON.stringify(base), snapshot);
+});
