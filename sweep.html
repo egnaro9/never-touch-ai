@@ -292,8 +292,9 @@
           <h2>Shape</h2>
           <div class="shapebar">
             <button type="button" id="addRole">+ role</button>
+            <button type="button" id="detachRole" disabled>&minus; detach</button>
             <button type="button" id="autoLayout">tidy</button>
-            <span class="shapehint" id="shapeHint">drag a node's right edge onto another to feed it</span>
+            <span class="shapehint" id="shapeHint">click a node to select &middot; drag its right edge onto another to feed it</span>
           </div>
           <div class="padwrap">
             <svg id="pad" role="img" aria-label="harness topology"></svg>
@@ -1366,6 +1367,7 @@ $("pad").addEventListener("pointerdown", (e) => {
     const p = padPoint(n, lay), at = padXY(e);
     padSel = n; padDrag = { n, dx: at.x - p.x, dy: at.y - p.y };
     $("pad").setPointerCapture(e.pointerId);
+    syncPadButtons();
     renderPad();
   }
 });
@@ -1417,16 +1419,31 @@ $("addRole").addEventListener("click", () => {
   }, "added a role — set its prompt in the config below");
 });
 
+let padPosUndo = null;
 $("autoLayout").addEventListener("click", () => {
-  // Hand placements are the user's; "tidy" is the one gesture allowed to discard
-  // them, and it is explicitly labelled as such.
-  padPos = {}; savePos(); renderPad(); padSay("re-tidied from the graph");
+  // Hand placements are the user's, and this is the one gesture allowed to
+  // discard them — so it is undoable, and it states what it did NOT touch.
+  // Nodes snapping back to tier order looks exactly like the graph being
+  // rewired, which is the single most alarming thing this editor could appear
+  // to do. It changes positions only; every edge is preserved.
+  if (padPosUndo && !Object.keys(padPos).length) {
+    padPos = padPosUndo; padPosUndo = null; savePos(); renderPad();
+    padSay("layout restored");
+    $("autoLayout").textContent = "tidy";
+    return;
+  }
+  padPosUndo = padPos;
+  padPos = {}; savePos(); renderPad();
+  padSay("re-laid out from the graph — connections unchanged");
+  $("autoLayout").textContent = "undo tidy";
 });
 
-document.addEventListener("keydown", (e) => {
-  if ((e.key !== "Delete" && e.key !== "Backspace") || !padSel) return;
-  if (/^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase())) return;  // never steal a keystroke
-  e.preventDefault();
+// Detach was reachable only by pressing Delete on a selected node, which is not
+// an affordance — nothing on screen said it existed, so "how do I remove a role?"
+// had no visible answer. Same action, now also a button that reports why it is
+// unavailable.
+function detachSelected() {
+  if (!padSel) { padSay("Click a node first, then detach.", true); return; }
   const n = padSel;
   writeShape((base) => {
     const kids = Object.keys(base.graph).filter((k) => (base.graph[k] || []).includes(n));
@@ -1438,13 +1455,31 @@ document.addEventListener("keydown", (e) => {
     delete base.graph[n];
   }, `detached ${n} — its prompt is untouched; delete the role in the config to remove it`);
   padSel = null;
+  syncPadButtons();
+}
+$("detachRole").addEventListener("click", detachSelected);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Delete" && e.key !== "Backspace") return;
+  if (/^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase())) return;  // never steal a keystroke
+  if (!padSel) return;
+  e.preventDefault();
+  detachSelected();
 });
+
+// The detach button is meaningless with nothing selected, and a dead-looking
+// button that silently does nothing is worse than one that is visibly disabled.
+function syncPadButtons() {
+  const b = $("detachRole");
+  b.disabled = !padSel;
+  b.textContent = padSel ? `\u2212 detach ${padSel}` : "\u2212 detach";
+}
 
 $("config").addEventListener("input", () => renderPad());
 
 updateEstimate();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
 renderPad();
+syncPadButtons();
 checkBackend();
 </script>
 </body>
