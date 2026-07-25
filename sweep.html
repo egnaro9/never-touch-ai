@@ -285,6 +285,10 @@
     background: var(--paper);
   }
   textarea { min-height: 220px; line-height: 1.45; white-space: pre; }
+  /* The config is the one textarea people actually read at length, and it now
+     sits behind two folds — when you open it you want the editor, not a slot.
+     Sized to the space the panel already reserves. */
+  #config { min-height: 300px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 
   .runline { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin: .2rem 0 .8rem; }
