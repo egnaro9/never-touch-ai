@@ -113,7 +113,7 @@
   .shapehint { font-family: var(--mono); font-size: .68rem; color: var(--faint);
                flex: 1 0 100%; margin-top: .15rem; line-height: 1.5; }
   .padwrap { border: 1px solid var(--line); border-radius: 2px; background: var(--paper); overflow: auto; }
-  #pad { display: block; width: 100%; height: 260px; touch-action: none; }
+  #pad { display: block; width: 100%; height: 340px; touch-action: none; }
   #pad .edge { stroke: var(--faint); stroke-width: 1.5; fill: none; pointer-events: none; }
   #pad .edgehit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
   #pad .nodebox { fill: var(--card); stroke: var(--line); }
@@ -591,7 +591,9 @@
             <button type="button" id="addRole">+ role</button>
             <button type="button" id="renameRoleBtn" disabled>rename</button>
             <button type="button" id="detachRole" disabled>&minus; detach</button>
-            <button type="button" id="centerPad" title="recentre the graph without moving anything relative to anything else">center</button>
+            <button type="button" id="zoomOut" title="zoom out">&minus;</button>
+            <button type="button" id="zoomIn" title="zoom in">+</button>
+            <button type="button" id="centerPad" title="recentre and reset the zoom, without moving anything relative to anything else">center</button>
             <button type="button" id="autoLayout">tidy</button>
             <span class="shapehint" id="shapeHint">click a node to select &middot; double-click to rename &middot; drag its right edge onto another to feed it &middot; prompts live in the config below</span>
           </div>
@@ -1820,6 +1822,8 @@ try { padPos = JSON.parse(localStorage.getItem(POS_KEY) || "{}") || {}; } catch 
 const savePos = () => { try { localStorage.setItem(POS_KEY, JSON.stringify(padPos)); } catch {} };
 
 let padSel = null, padDrag = null, padLink = null;
+let padZoom = 1;                 // >1 magnifies; the frame shrinks, the graph does not move
+const PAD_ZOOM_MIN = 0.35, PAD_ZOOM_MAX = 4;
 
 function padSay(text, bad) {
   const m = $("padMsg");
@@ -1935,6 +1939,10 @@ function renderPad() {
   const aspect = (box.width > 0 && box.height > 0) ? box.width / box.height : 1080 / 260;
   let vw = contentW, vh = contentH;
   if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
+  // Zoom is a property of the FRAME, not the nodes: a smaller viewBox over the
+  // same content magnifies it, so nothing about the graph or the saved layout
+  // changes when you zoom.
+  vw /= padZoom; vh /= padZoom;
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   // HOLD THE FRAME DURING A GESTURE. Recomputing the centre on every pointermove
   // makes the view chase the node you are dragging: the frame shifts under the
@@ -2076,6 +2084,14 @@ $("addRole").addEventListener("click", () => {
 // outside the visible box with no way back except tidy, which throws the whole
 // arrangement away. This translates every node by the same offset, so the layout
 // you built is preserved exactly and only its position on the canvas changes.
+function setPadZoom(z) {
+  padZoom = Math.min(PAD_ZOOM_MAX, Math.max(PAD_ZOOM_MIN, z));
+  renderPad();
+  padSay(padZoom === 1 ? "" : `zoom ${Math.round(padZoom * 100)}%`);
+}
+$("zoomIn").addEventListener("click", () => setPadZoom(padZoom * 1.25));
+$("zoomOut").addEventListener("click", () => setPadZoom(padZoom / 1.25));
+
 $("centerPad").addEventListener("click", () => {
   // The view centres itself on every render, so this is the escape hatch for the
   // other half of the problem: one node dragged a long way makes the frame zoom
@@ -2109,6 +2125,7 @@ $("centerPad").addEventListener("click", () => {
     padPos[n] = { x: PAD_M + (p.x - minX) * k, y: PAD_M + (p.y - minY) * k };
   }
   savePos();
+  padZoom = 1;                    // centre is the "put it back" control
   const wrap = $("pad").parentElement;
   if (wrap) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
   renderPad();
