@@ -93,6 +93,30 @@
     background: var(--paper); color: var(--ink);
   }
 
+  /* ---- shape pad ------------------------------------------------------- */
+  .shapebar { display: flex; gap: .4rem; align-items: center; margin: 0 0 .6rem; flex-wrap: wrap; }
+  .shapebar button {
+    font-family: var(--mono); font-size: .74rem; padding: .3rem .6rem;
+    border: 1px solid var(--line); border-radius: 2px; background: var(--raised);
+    color: var(--ink); cursor: pointer;
+  }
+  .shapebar button:hover { border-color: var(--accent); color: var(--accent); }
+  .shapehint { font-family: var(--mono); font-size: .68rem; color: var(--faint); }
+  .padwrap { border: 1px solid var(--line); border-radius: 2px; background: var(--paper); overflow: auto; }
+  #pad { display: block; width: 100%; height: 260px; touch-action: none; }
+  #pad .edge { stroke: var(--faint); stroke-width: 1.5; fill: none; }
+  #pad .edge.hot { stroke: var(--error); stroke-width: 2.5; }
+  #pad .edgehit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
+  #pad .nodebox { fill: var(--card); stroke: var(--line); }
+  #pad .nodebox.term { stroke: var(--accent); }
+  #pad .nodebox.sel  { stroke: var(--armed); }
+  #pad .nlab { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+  #pad .nsub { font-family: var(--mono); font-size: 9px; fill: var(--faint); }
+  #pad .port { fill: var(--accent); opacity: .85; cursor: crosshair; }
+  #pad .ghost { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+  #pad text { pointer-events: none; user-select: none; }
+  #pad .grab { cursor: grab; }
+
   /* ---- shell ----------------------------------------------------------- */
   .wrap {
     max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 4rem;
@@ -252,6 +276,23 @@
 
       <!-- results -->
       <div>
+        <!-- SHAPE PAD. Edits the TOPOLOGY only: which roles exist and what feeds
+             what. It deliberately cannot see or touch a system prompt, a model
+             id, a substrate or an axis — those stay the textarea's, so a canvas
+             gesture can never silently eat something it does not display. -->
+        <div class="card">
+          <h2>Shape</h2>
+          <div class="shapebar">
+            <button type="button" id="addRole">+ role</button>
+            <button type="button" id="autoLayout">tidy</button>
+            <span class="shapehint" id="shapeHint">drag a node's right edge onto another to feed it</span>
+          </div>
+          <div class="padwrap">
+            <svg id="pad" role="img" aria-label="harness topology"></svg>
+          </div>
+          <div class="msg" id="padMsg"></div>
+        </div>
+
         <div class="card">
           <h2>Comparison</h2>
           <div id="results"><div class="empty">No runs yet. Paste your key, set a config, then run a sweep.</div></div>
@@ -1297,8 +1338,250 @@ $("taskSource").addEventListener("change", async () => {
 
 // init
 setArmed(false);
+// ---------------------------------------------------------------------------
+// SHAPE PAD — a second view of `base.graph`, not a second source of truth.
+//
+// It owns exactly two things: which roles exist, and what feeds what. It never
+// reads or writes a system prompt, model id, substrate, axis or suite — so a
+// gesture cannot destroy something the canvas does not show, which is the way
+// these editors normally eat your work.
+//
+// Every mutation goes through writeShape(), which refuses outright if the
+// textarea does not currently parse. Overwriting half-typed JSON with a
+// re-serialized object would silently discard whatever was being written.
+// ---------------------------------------------------------------------------
+const NODE_W = 116, NODE_H = 36, TIER_X = 168, ROW_Y = 54, PAD_M = 18;
+const POS_KEY = "shapepad.positions";   // positions only — never a credential
+
+let padPos = {};
+try { padPos = JSON.parse(localStorage.getItem(POS_KEY) || "{}") || {}; } catch { padPos = {}; }
+const savePos = () => { try { localStorage.setItem(POS_KEY, JSON.stringify(padPos)); } catch {} };
+
+let padSel = null, padDrag = null, padLink = null;
+
+function padSay(text, bad) {
+  const m = $("padMsg");
+  m.className = "msg" + (bad ? " err" : text ? " ok" : "");
+  m.textContent = text || "";
+}
+
+// The config as an object, or null when it does not parse. Null means REFUSE.
+function readCfg() {
+  try { return JSON.parse($("config").value); } catch { return null; }
+}
+
+// The single writer. `mutate(base)` may touch base.roles keys and base.graph.
+function writeShape(mutate, describe) {
+  const obj = readCfg();
+  if (!obj || !obj.base) {
+    padSay("The config doesn't parse right now — fix the JSON and the shape will follow. " +
+           "Nothing was changed.", true);
+    return false;
+  }
+  const before = JSON.stringify(obj);
+  const base = obj.base;
+  base.roles = base.roles || {};
+  // Normalise a chain into the graph form first: editing a shape has to operate
+  // on edges, and `pipeline` cannot express one.
+  if ((!base.graph || !Object.keys(base.graph).length) && (base.pipeline || []).length) {
+    base.graph = Object.fromEntries(base.pipeline.map((r, i) => [r, i ? [base.pipeline[i - 1]] : []]));
+  }
+  base.graph = base.graph || {};
+  try { mutate(base); } catch (e) { padSay(e.message, true); return false; }
+  base.pipeline = [];                       // graph is now authoritative
+
+  // Refuse to write a shape the runner would reject. Same orderOf the sweep uses.
+  try { orderOf(base); }
+  catch (e) { padSay(e.message, true); return false; }
+
+  if (JSON.stringify(obj) === before) return false;
+  $("config").value = JSON.stringify(obj, null, 2);
+  // Programmatic assignment fires nothing, so tell the rest of the page itself.
+  $("config").dispatchEvent(new Event("input"));
+  padSay(describe || "");
+  renderPad();
+  return true;
+}
+
+// Tier layout — the same tier walk shapeLabel uses, so the picture and the
+// printed shape can never disagree about what depends on what.
+function padLayout(base) {
+  const g = asGraph(base);
+  let order;
+  try { order = orderOf(base); } catch { return null; }
+  const placed = new Set(), tiers = [];
+  while (placed.size < order.length) {
+    const tier = order.filter((n) => !placed.has(n) && g[n].every((d) => placed.has(d))).sort();
+    if (!tier.length) break;
+    tiers.push(tier); tier.forEach((n) => placed.add(n));
+  }
+  const auto = {};
+  tiers.forEach((tier, ti) => tier.forEach((n, ri) => {
+    auto[n] = { x: PAD_M + ti * TIER_X, y: PAD_M + ri * ROW_Y };
+  }));
+  return { g, auto, tiers };
+}
+
+function padPoint(n, lay) { return padPos[n] || lay.auto[n] || { x: PAD_M, y: PAD_M }; }
+
+function renderPad() {
+  const pad = $("pad");
+  const obj = readCfg();
+  if (!obj || !obj.base || !obj.base.roles) {
+    pad.innerHTML = "";
+    padSay("The config doesn't parse — the shape can't be drawn.", true);
+    return;
+  }
+  const base = obj.base;
+  const lay = padLayout(base);
+  if (!lay) { pad.innerHTML = ""; padSay("This graph is not runnable, so it can't be laid out.", true); return; }
+  const nodes = Object.keys(lay.g);
+  let terms = [];
+  try { terms = terminalsOf(base); } catch {}
+
+  let maxX = 0, maxY = 0;
+  for (const n of nodes) {
+    const p = padPoint(n, lay);
+    maxX = Math.max(maxX, p.x + NODE_W); maxY = Math.max(maxY, p.y + NODE_H);
+  }
+  pad.setAttribute("viewBox", `0 0 ${maxX + PAD_M} ${Math.max(maxY + PAD_M, 200)}`);
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let svg = "";
+  // edges first so nodes sit on top
+  for (const child of nodes) {
+    for (const parent of lay.g[child]) {
+      const a = padPoint(parent, lay), b = padPoint(child, lay);
+      const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
+      const mx = (x1 + x2) / 2;
+      const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+      svg += `<path class="edge" d="${d}"></path>`;
+      svg += `<path class="edgehit" d="${d}" data-edge="${esc(parent)}|${esc(child)}"><title>click to cut ${esc(parent)} → ${esc(child)}</title></path>`;
+    }
+  }
+  for (const n of nodes) {
+    const p = padPoint(n, lay);
+    const role = base.roles[n] || {};
+    const cls = "nodebox" + (terms.includes(n) ? " term" : "") + (padSel === n ? " sel" : "");
+    svg += `<g data-node="${esc(n)}" class="grab">` +
+      `<rect class="${cls}" x="${p.x}" y="${p.y}" width="${NODE_W}" height="${NODE_H}" rx="2"></rect>` +
+      `<text class="nlab" x="${p.x + 8}" y="${p.y + 15}">${esc(n)}</text>` +
+      `<text class="nsub" x="${p.x + 8}" y="${p.y + 28}">${esc(baseModelId(role.model || "—")).slice(0, 18)}</text>` +
+      `<circle class="port" data-port="${esc(n)}" cx="${p.x + NODE_W}" cy="${p.y + NODE_H / 2}" r="5"></circle>` +
+      `</g>`;
+  }
+  if (padLink && padLink.to) {
+    svg += `<path class="ghost" d="M${padLink.x1},${padLink.y1} L${padLink.to.x},${padLink.to.y}"></path>`;
+  }
+  pad.innerHTML = svg;
+}
+
+// --- gestures --------------------------------------------------------------
+function padXY(evt) {
+  const pad = $("pad"), r = pad.getBoundingClientRect();
+  const vb = (pad.getAttribute("viewBox") || "0 0 100 100").split(" ").map(Number);
+  return { x: (evt.clientX - r.left) / r.width * vb[2], y: (evt.clientY - r.top) / r.height * vb[3] };
+}
+
+$("pad").addEventListener("pointerdown", (e) => {
+  const portEl = e.target.closest("[data-port]");
+  const nodeEl = e.target.closest("[data-node]");
+  const edgeEl = e.target.closest("[data-edge]");
+
+  if (edgeEl) {                                   // cut an edge
+    const [parent, child] = edgeEl.dataset.edge.split("|");
+    writeShape((base) => {
+      base.graph[child] = (base.graph[child] || []).filter((d) => d !== parent);
+    }, `cut ${parent} → ${child}`);
+    return;
+  }
+  if (portEl) {                                   // start drawing an edge
+    const obj = readCfg(); if (!obj) return;
+    const lay = padLayout(obj.base); if (!lay) return;
+    const p = padPoint(portEl.dataset.port, lay);
+    padLink = { from: portEl.dataset.port, x1: p.x + NODE_W, y1: p.y + NODE_H / 2, to: padXY(e) };
+    $("pad").setPointerCapture(e.pointerId);
+    return;
+  }
+  if (nodeEl) {                                   // move a node
+    const n = nodeEl.dataset.node;
+    const obj = readCfg(); if (!obj) return;
+    const lay = padLayout(obj.base); if (!lay) return;
+    const p = padPoint(n, lay), at = padXY(e);
+    padSel = n; padDrag = { n, dx: at.x - p.x, dy: at.y - p.y };
+    $("pad").setPointerCapture(e.pointerId);
+    renderPad();
+  }
+});
+
+$("pad").addEventListener("pointermove", (e) => {
+  if (padDrag) {
+    const at = padXY(e);
+    padPos[padDrag.n] = { x: Math.max(0, at.x - padDrag.dx), y: Math.max(0, at.y - padDrag.dy) };
+    renderPad();
+  } else if (padLink) {
+    padLink.to = padXY(e);
+    renderPad();
+  }
+});
+
+$("pad").addEventListener("pointerup", (e) => {
+  if (padDrag) { savePos(); padDrag = null; }
+  if (padLink) {
+    const drop = document.elementFromPoint(e.clientX, e.clientY);
+    const target = drop && drop.closest && drop.closest("[data-node]");
+    const from = padLink.from;
+    padLink = null;
+    if (target && target.dataset.node !== from) {
+      const child = target.dataset.node;
+      writeShape((base) => {
+        const deps = base.graph[child] = base.graph[child] || [];
+        if (deps.includes(from)) throw new Error(`${from} already feeds ${child}`);
+        deps.push(from);
+      }, `${from} → ${child}`);
+    } else {
+      renderPad();
+    }
+  }
+});
+
+$("addRole").addEventListener("click", () => {
+  writeShape((base) => {
+    let i = 1, name;
+    do { name = `role_${i++}`; } while (base.roles[name]);
+    // A new node copies an existing role's model so it is runnable immediately,
+    // rather than inventing a model id that may not exist.
+    const donor = Object.values(base.roles)[0] || {};
+    base.roles[name] = { model: donor.model || "claude-opus-4-8", system: "", max_tokens: 900 };
+    base.graph[name] = [];
+  }, "added a role — set its prompt in the config below");
+});
+
+$("autoLayout").addEventListener("click", () => {
+  // Hand placements are the user's; "tidy" is the one gesture allowed to discard
+  // them, and it is explicitly labelled as such.
+  padPos = {}; savePos(); renderPad(); padSay("re-tidied from the graph");
+});
+
+document.addEventListener("keydown", (e) => {
+  if ((e.key !== "Delete" && e.key !== "Backspace") || !padSel) return;
+  if (/^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase())) return;  // never steal a keystroke
+  e.preventDefault();
+  const n = padSel;
+  writeShape((base) => {
+    const kids = Object.keys(base.graph).filter((k) => (base.graph[k] || []).includes(n));
+    if (kids.length) throw new Error(`${n} still feeds ${kids.join(", ")} — cut those first`);
+    delete base.graph[n];
+    delete base.roles[n];      // the role goes too, or the config keeps a ghost
+  }, `deleted ${n}`);
+  padSel = null;
+});
+
+$("config").addEventListener("input", () => renderPad());
+
 updateEstimate();
 renderSubstrateKeys();   // the default config already names an OpenAI substrate
+renderPad();
 checkBackend();
 </script>
 </body>
