@@ -340,3 +340,84 @@ test("a free run reports no cost to weigh, not unknown cost", () => {
   // but a genuinely unpriced side is still unknown
   assert.equal(costVerdict(pair(8, 1, 11), null, 0, "#1", "#2").known, false);
 });
+
+// ---------------------------------------------------------------------------
+// RENAME
+// ---------------------------------------------------------------------------
+const { renameRole, renameRoleInAxes } = core;
+
+test("renaming updates the role, its graph key, AND every reference to it", () => {
+  // The classic corruption: updating two of the three places silently orphans a
+  // node or invents a dangling edge that only surfaces at run time.
+  const base = {
+    name: "t",
+    roles: { planner: role("m1"), worker: role("m2"), judge: role("m3") },
+    pipeline: [],
+    graph: { planner: [], worker: ["planner"], judge: ["planner", "worker"] },
+  };
+  renameRole(base, "planner", "manager");
+  assert.deepEqual(Object.keys(base.roles), ["manager", "worker", "judge"], "position preserved");
+  assert.deepEqual(base.graph, { manager: [], worker: ["manager"], judge: ["manager", "worker"] });
+  assert.deepEqual(orderOf(base), ["manager", "worker", "judge"], "still a runnable graph");
+});
+
+test("the role body survives a rename byte for byte", () => {
+  const body = { model: "claude-opus-4-8", system: "a hand written prompt", max_tokens: 421, substrate: "s1" };
+  const base = { name: "t", roles: { a: body }, pipeline: [], graph: { a: [] } };
+  renameRole(base, "a", "b");
+  assert.deepEqual(base.roles.b, body);
+  assert.equal(base.roles.b.system, "a hand written prompt");
+});
+
+test("a pipeline chain is renamed too", () => {
+  const base = { name: "t", roles: { a: role("m"), b: role("m") }, pipeline: ["a", "b"], graph: {} };
+  renameRole(base, "a", "z");
+  assert.deepEqual(base.pipeline, ["z", "b"]);
+  assert.deepEqual(asGraph(base), { z: [], b: ["z"] });
+});
+
+test("renaming onto an existing name is refused, not merged", () => {
+  const base = { name: "t", roles: { a: role("m"), b: role("m") }, pipeline: [], graph: { a: [], b: ["a"] } };
+  assert.throws(() => renameRole(base, "a", "b"), /already exists/);
+  assert.deepEqual(Object.keys(base.roles), ["a", "b"], "nothing changed on refusal");
+});
+
+test("empty and malformed names are refused", () => {
+  const mk = () => ({ name: "t", roles: { a: role("m") }, pipeline: [], graph: { a: [] } });
+  assert.throws(() => renameRole(mk(), "a", "   "), /needs a name/);
+  assert.throws(() => renameRole(mk(), "a", "2fast"), /must start with a letter/);
+  assert.throws(() => renameRole(mk(), "a", "has space"), /letters, digits or _/);
+  // '|' used to be an edge delimiter, and a name containing one cut the wrong edge
+  assert.throws(() => renameRole(mk(), "a", "a|b"), /letters, digits or _/);
+});
+
+test("renaming a role that does not exist is refused", () => {
+  const base = { name: "t", roles: { a: role("m") }, pipeline: [], graph: { a: [] } };
+  assert.throws(() => renameRole(base, "ghost", "x"), /no role named 'ghost'/);
+});
+
+test("axes are renamed too, or a working sweep breaks", () => {
+  // An axis left pointing at the old name turns into "axis references unknown
+  // role" at expansion — a rename that breaks the sweep it was meant to set up.
+  const axes = [
+    { kind: "role", role: "planner", field: "model", values: ["m1", "m2"] },
+    { kind: "topology", values: [["planner", "worker"], { planner: [], worker: ["planner"] }] },
+  ];
+  renameRoleInAxes(axes, "planner", "manager");
+  assert.equal(axes[0].role, "manager");
+  assert.deepEqual(axes[1].values[0], ["manager", "worker"]);
+  assert.deepEqual(axes[1].values[1], { manager: [], worker: ["manager"] });
+});
+
+test("a rename leaves the whole config still expandable", () => {
+  const base = {
+    name: "t", roles: { planner: role("m"), worker: role("m") },
+    pipeline: [], graph: { planner: [], worker: ["planner"] },
+  };
+  const axes = [{ kind: "role", role: "planner", field: "model", values: ["m1", "m2"] }];
+  renameRole(base, "planner", "manager");
+  renameRoleInAxes(axes, "planner", "manager");
+  const out = expandSweep(base, axes);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out.map((c) => c.roles.manager.model), ["m1", "m2"]);
+});

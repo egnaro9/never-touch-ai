@@ -301,9 +301,10 @@
           <h2>Shape</h2>
           <div class="shapebar">
             <button type="button" id="addRole">+ role</button>
+            <button type="button" id="renameRoleBtn" disabled>rename</button>
             <button type="button" id="detachRole" disabled>&minus; detach</button>
             <button type="button" id="autoLayout">tidy</button>
-            <span class="shapehint" id="shapeHint">click a node to select &middot; drag its right edge onto another to feed it</span>
+            <span class="shapehint" id="shapeHint">click a node to select &middot; double-click to rename &middot; drag its right edge onto another to feed it &middot; prompts live in the config below</span>
           </div>
           <div class="padwrap">
             <svg id="pad" role="img" aria-label="harness topology"></svg>
@@ -1511,6 +1512,44 @@ function detachSelected() {
   padSel = null;
   syncPadButtons();
 }
+// A role's NAME is a graph key, so renaming is topology work and belongs here.
+// Its PROMPT is not — the canvas does not display one, so it must not be able
+// to change one. That boundary is the whole reason this editor is safe.
+function renameSelected() {
+  if (!padSel) { padSay("Click a node first, then rename.", true); return; }
+  const from = padSel;
+  const to = window.prompt(`Rename role "${from}" to:`, from);
+  if (to === null) return;                       // cancelled
+  const obj = readCfg();
+  if (!obj || !obj.base) { padSay("The config doesn't parse — nothing was changed.", true); return; }
+  // Axes sit beside `base`, so writeShape's mutate(base) cannot reach them.
+  // Rename them under the SAME guard: if the shape write is refused, the axes
+  // must not have been rewritten either, or the two halves drift apart.
+  let axesBefore = JSON.stringify(obj.axes || []);
+  const ok = writeShape((base) => {
+    renameRole(base, from, to.trim());
+  }, `renamed ${from} to ${to.trim()}`);
+  if (!ok) return;
+  const after = readCfg();
+  if (after) {
+    renameRoleInAxes(after.axes || [], from, to.trim());
+    if (JSON.stringify(after.axes || []) !== axesBefore) {
+      $("config").value = JSON.stringify(after, null, 2);
+      $("config").dispatchEvent(new Event("input"));
+    }
+  }
+  // carry the hand-placed position across, or the node jumps on rename
+  if (padPos[from]) { padPos[to.trim()] = padPos[from]; delete padPos[from]; savePos(); }
+  padSel = to.trim();
+  syncPadButtons();
+  renderPad();
+}
+$("renameRoleBtn").addEventListener("click", renameSelected);
+$("pad").addEventListener("dblclick", (e) => {
+  const n = e.target.closest("[data-node]");
+  if (!n) return;
+  padSel = n.dataset.node; syncPadButtons(); renameSelected();
+});
 $("detachRole").addEventListener("click", detachSelected);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Delete" && e.key !== "Backspace") return;
@@ -1526,6 +1565,7 @@ function syncPadButtons() {
   const b = $("detachRole");
   b.disabled = !padSel;
   b.textContent = padSel ? `\u2212 detach ${padSel}` : "\u2212 detach";
+  $("renameRoleBtn").disabled = !padSel;
 }
 
 $("config").addEventListener("input", () => renderPad());

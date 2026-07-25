@@ -344,10 +344,72 @@ function costVerdict(r, costA, costB, nameA, nameB) {
 }
 
 
+// ===========================================================================
+// RENAME — a role name is a graph key, so renaming is topology work.
+//
+// This is where box-and-arrow editors classically corrupt data: the name is
+// referenced from three places (the roles map, the graph's own key, and every
+// OTHER node's parent list) and missing any one of them silently orphans a
+// node or invents a dangling edge. Doing it in one pure function, over the
+// whole config at once, is what makes that hard to get wrong.
+//
+// Mutates a config in place and returns it. Throws on anything ambiguous
+// rather than guessing.
+// ===========================================================================
+function renameRole(base, from, to) {
+  const name = String(to || "").trim();
+  if (!name) throw new Error("a role needs a name");
+  if (name === from) return base;
+  if (!base.roles || !(from in base.roles)) throw new Error(`no role named '${from}'`);
+  if (name in base.roles) throw new Error(`'${name}' already exists`);
+  // The name ends up as a JSON key and inside <<tags>> in a fan-in prompt, so
+  // keep it to something that survives both without quoting games.
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+    throw new Error(`'${name}' must start with a letter and contain only letters, digits or _`);
+
+  // Rebuild rather than delete+add, so the role keeps its position in the file.
+  // A rename that reshuffles the config makes the diff unreadable.
+  base.roles = Object.fromEntries(
+    Object.entries(base.roles).map(([k, v]) => [k === from ? name : k, v]));
+
+  if (base.graph) {
+    base.graph = Object.fromEntries(
+      Object.entries(base.graph).map(([k, deps]) => [
+        k === from ? name : k,
+        (deps || []).map((d) => (d === from ? name : d)),
+      ]));
+  }
+  if (Array.isArray(base.pipeline))
+    base.pipeline = base.pipeline.map((r) => (r === from ? name : r));
+
+  // Axes reference roles by name too. A rename that leaves an axis pointing at
+  // the old name turns a working sweep into "axis references unknown role".
+  return base;
+}
+
+// Axes live beside `base`, so they are renamed separately and explicitly.
+function renameRoleInAxes(axes, from, to) {
+  for (const ax of axes || []) {
+    if (ax.role === from) ax.role = to;
+    if ((ax.kind || "role") === "topology" && Array.isArray(ax.values)) {
+      ax.values = ax.values.map((v) => {
+        if (Array.isArray(v)) return v.map((r) => (r === from ? to : r));
+        if (v && typeof v === "object")
+          return Object.fromEntries(Object.entries(v).map(([k, deps]) => [
+            k === from ? to : k, (deps || []).map((d) => (d === from ? to : d))]));
+        return v;
+      });
+    }
+  }
+  return axes;
+}
+
+
 return {
   PRICING, PRICING_VERIFIED, PRICING_SOURCE,
   baseModelId, todayISO, priceFor, costOf, round6, usd, short,
   asGraph, orderOf, terminalsOf, shapeLabel, expandSweep,
   choose, signTestP, pairedCompare, pairedVerdict, costVerdict,
+  renameRole, renameRoleInAxes,
 };
 });
