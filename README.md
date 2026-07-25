@@ -94,7 +94,37 @@ A harness config is **data**, which is what makes combinations enumerable:
 }
 ```
 
-`axes` expands to every combination (here 4). Each config runs **N times**
+### Three kinds of axis
+
+A harness has three genuinely different variables, and the sweep can vary each:
+
+```jsonc
+"substrates": {                                   // named serving paths
+  "anthropic-direct": { "shape": "anthropic", "base_url": "" },
+  "local-vllm":       { "shape": "openai", "base_url": "http://localhost:8001/v1" }
+},
+"axes": [
+  { "kind": "role",      "role": "manager", "field": "model",
+    "values": ["claude-opus-4-8", "claude-sonnet-5"] },   // who does the job
+  { "kind": "topology",  "values": [["worker"], ["manager","worker"]] },
+                                                          // is the role needed at all
+  { "kind": "substrate", "role": "*", "values": ["anthropic-direct", "local-vllm"] }
+                                                          // same model id, different serving path
+]
+```
+
+**Topology** answers "do I even need a manager?" — a question no model-only sweep
+can ask, because the pipeline used to be fixed in `base`.
+
+**Substrate** is the one most tools ignore. A model id is not a system: the same
+id can be served from different endpoints, hardware, quantizations and point
+releases, and the response comes back 200, well-formed and gradeable either way.
+Holding the id fixed while varying the serving path is the only way to see it.
+Each step's trace records which substrate served it, so the comparison is
+auditable rather than assumed. (That the serving path is an unmeasured third
+variable — alongside the model and the grader — is ANP2 Network's observation.)
+
+`axes` expands to every combination. Each config runs **N times**
 (*runs per config*) so you compare aggregates, not noisy single shots. A
 client-side **spend cap** halts the sweep before it can overrun.
 

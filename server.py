@@ -41,12 +41,29 @@ from pydantic import BaseModel, Field, field_validator
 # ----------------------------------------------------------------------------
 
 
+class Substrate(BaseModel):
+    """WHERE a model runs — the serving path behind a stable model id.
+
+    A model id is not a system. The same id can be served from different
+    endpoints, hardware, quantizations and point releases, and none of that is
+    visible in the response: it comes back 200, well-formed, gradeable, and
+    possibly worse. Holding the id fixed while varying this is the only way to
+    see it. (The observation that the serving path is an unmeasured third
+    variable — alongside the model and the grader — is ANP2 Network's.)
+    """
+
+    name: str                     # "anthropic-direct", "bedrock", "local-vllm"
+    shape: str = "anthropic"      # wire format: "anthropic" | "openai"
+    base_url: str = ""            # "" = the shape's default endpoint
+
+
 class RoleSpec(BaseModel):
     """One role in the harness: a model bound to some scaffolding."""
 
     model: str                    # e.g. "claude-opus-4-8"
     system: str = ""              # the scaffolding / system prompt for this role
     max_tokens: int = Field(default=1024, ge=1, le=64000)
+    substrate: Optional[str] = None   # name of a Substrate; None = harness default
 
 
 class HarnessConfig(BaseModel):
@@ -62,6 +79,7 @@ class HarnessConfig(BaseModel):
     name: str
     roles: dict[str, RoleSpec]
     pipeline: list[str]
+    substrates: dict[str, Substrate] = {}   # named serving paths this config may use
     runs_per_config: int = Field(default=3, ge=1, le=20)  # repeats for variance
 
     @field_validator("pipeline")
@@ -75,11 +93,31 @@ class HarnessConfig(BaseModel):
 
 
 class SweepAxis(BaseModel):
-    """Vary one field of one role across several values."""
+    """One dimension of the sweep.
 
-    role: str
-    field: str                    # "model" | "system" | "max_tokens"
+    Three kinds, because there are three genuinely different questions:
+
+      role      — vary a field of one role. "Which model should plan?"
+      topology  — vary the pipeline itself. "Do I even need a manager?"
+                  values are pipelines: [["worker"], ["manager","worker"]]
+      substrate — vary the serving path while the model id stays fixed.
+                  "Is Sonnet-via-Bedrock the same thing as Sonnet-direct?"
+                  values are substrate names; role="*" applies to every role.
+
+    `kind` defaults to "role" so every config written before this still parses.
+    """
+
+    kind: str = "role"            # "role" | "topology" | "substrate"
+    role: str = ""                # role kinds: which role; substrate: role or "*"
+    field: str = ""               # role kind: "model" | "system" | "max_tokens"
     values: list[Any]
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, v: str) -> str:
+        if v not in ("role", "topology", "substrate"):
+            raise ValueError(f"axis kind must be role|topology|substrate, got '{v}'")
+        return v
 
 
 class ConfigSweep(BaseModel):
@@ -100,10 +138,35 @@ class ConfigSweep(BaseModel):
             cfg = self.base.model_copy(deep=True)
             label_bits = []
             for ax, val in zip(self.axes, combo):
-                if ax.role not in cfg.roles:
-                    raise HTTPException(422, f"sweep axis references unknown role '{ax.role}'")
-                setattr(cfg.roles[ax.role], ax.field, val)
-                label_bits.append(f"{ax.role}.{ax.field}={_short(val)}")
+
+                if ax.kind == "topology":
+                    if not isinstance(val, list) or not val:
+                        raise HTTPException(422, "topology axis values must be non-empty pipelines")
+                    missing = [r for r in val if r not in cfg.roles]
+                    if missing:
+                        raise HTTPException(422, f"topology '{val}' references unknown roles: {missing}")
+                    cfg.pipeline = list(val)
+                    label_bits.append("→".join(val))
+
+                elif ax.kind == "substrate":
+                    if val not in cfg.substrates:
+                        raise HTTPException(
+                            422, f"substrate '{val}' is not defined in base.substrates "
+                                 f"({sorted(cfg.substrates)})")
+                    targets = list(cfg.roles) if ax.role in ("", "*") else [ax.role]
+                    for r in targets:
+                        if r not in cfg.roles:
+                            raise HTTPException(422, f"substrate axis references unknown role '{r}'")
+                        cfg.roles[r].substrate = val
+                    label_bits.append(f"on={val}" if ax.role in ("", "*")
+                                      else f"{ax.role}@{val}")
+
+                else:                                   # kind == "role"
+                    if ax.role not in cfg.roles:
+                        raise HTTPException(422, f"sweep axis references unknown role '{ax.role}'")
+                    setattr(cfg.roles[ax.role], ax.field, val)
+                    label_bits.append(f"{ax.role}.{ax.field}={_short(val)}")
+
             cfg.name = f"{self.base.name} [{', '.join(label_bits)}]"
             out.append(cfg)
         return out

@@ -287,9 +287,22 @@ const DEFAULT_CONFIG = {
     },
     pipeline: ["manager", "worker"]
   },
+  // Named serving paths. A model id is not a system: the same id can be served
+  // from different endpoints, hardware and point releases, and the response
+  // looks identical. Holding the id fixed and varying THIS is how you see it.
+  substrates: {
+    "anthropic-direct": { name: "anthropic-direct", shape: "anthropic", base_url: "" }
+    // add e.g.:
+    // "local-vllm": { name: "local-vllm", shape: "openai", base_url: "http://localhost:8001/v1" }
+  },
+  // Three kinds of axis, three different questions:
+  //   role      — which model should do this job?
+  //   topology  — do I even need this role? (values are pipelines)
+  //   substrate — is the same model id the same system on another endpoint?
   axes: [
-    { role: "manager", field: "model", values: ["claude-opus-4-8", "claude-sonnet-5"] },
-    { role: "worker",  field: "model", values: ["claude-sonnet-5", "claude-haiku-4-5-20251001"] }
+    { kind: "role", role: "manager", field: "model", values: ["claude-opus-4-8", "claude-sonnet-5"] },
+    { kind: "topology", values: [["worker"], ["manager", "worker"]] }
+    // { kind: "substrate", role: "*", values: ["anthropic-direct", "local-vllm"] }
   ],
   // How to SCORE each config's final output for this task. "python" runs the
   // generated code against these asserts in the backend sandbox (needs backend).
@@ -315,15 +328,38 @@ function expandSweep(base, axes) {
   if (!axes || !axes.length) return [structuredClone(base)];
   let combos = [[]];
   for (const ax of axes) {
-    combos = combos.flatMap((c) => ax.values.map((v) => [...c, { role: ax.role, field: ax.field, value: v }]));
+    combos = combos.flatMap((c) => ax.values.map((v) => [...c, { ax, value: v }]));
   }
   return combos.map((combo) => {
     const cfg = structuredClone(base);
     const bits = [];
-    for (const { role, field, value } of combo) {
-      if (!cfg.roles[role]) throw new Error(`sweep axis references unknown role '${role}'`);
-      cfg.roles[role][field] = value;
-      bits.push(`${role}.${field}=${short(value)}`);
+    for (const { ax, value } of combo) {
+      const kind = ax.kind || "role";
+
+      if (kind === "topology") {
+        if (!Array.isArray(value) || !value.length)
+          throw new Error("topology axis values must be non-empty pipelines");
+        const missing = value.filter((r) => !cfg.roles[r]);
+        if (missing.length)
+          throw new Error(`topology [${value}] references unknown roles: ${missing}`);
+        cfg.pipeline = [...value];
+        bits.push(value.join("→"));
+
+      } else if (kind === "substrate") {
+        if (!cfg.substrates || !cfg.substrates[value])
+          throw new Error(`substrate '${value}' is not defined in base.substrates`);
+        const targets = (!ax.role || ax.role === "*") ? Object.keys(cfg.roles) : [ax.role];
+        for (const r of targets) {
+          if (!cfg.roles[r]) throw new Error(`substrate axis references unknown role '${r}'`);
+          cfg.roles[r].substrate = value;
+        }
+        bits.push((!ax.role || ax.role === "*") ? `on=${value}` : `${ax.role}@${value}`);
+
+      } else {
+        if (!cfg.roles[ax.role]) throw new Error(`sweep axis references unknown role '${ax.role}'`);
+        cfg.roles[ax.role][ax.field] = value;
+        bits.push(`${ax.role}.${ax.field}=${short(value)}`);
+      }
     }
     cfg.name = `${base.name} [${bits.join(", ")}]`;
     return cfg;
@@ -352,12 +388,20 @@ async function crossCheckSweep(base, axes, mine) {
   for (let i = 0; i < n; i++) {
     if (theirs[i].name !== mine[i].name)
       diffs.push(`#${i + 1} name: "${mine[i].name}" vs "${theirs[i].name}"`);
+    // topology — a differing pipeline means the two sides would run different
+    // harnesses under the same label, which is the worst kind of disagreement
+    const mp = (mine[i].pipeline || []).join("→"), tp = (theirs[i].pipeline || []).join("→");
+    if (mp !== tp) diffs.push(`#${i + 1} pipeline: ${mp} vs ${tp}`);
     for (const role of Object.keys(mine[i].roles || {})) {
       const a = mine[i].roles[role], b = (theirs[i].roles || {})[role];
       if (!b) { diffs.push(`#${i + 1} role '${role}' missing on backend`); continue; }
       if (a.model !== b.model) diffs.push(`#${i + 1} ${role}.model: ${a.model} vs ${b.model}`);
       if ((a.max_tokens || 1024) !== (b.max_tokens || 1024))
         diffs.push(`#${i + 1} ${role}.max_tokens: ${a.max_tokens} vs ${b.max_tokens}`);
+      // substrate — same model id on a different serving path is a different
+      // system, so a mismatch here silently invalidates the comparison
+      if ((a.substrate || null) !== (b.substrate || null))
+        diffs.push(`#${i + 1} ${role}.substrate: ${a.substrate || "default"} vs ${b.substrate || "default"}`);
     }
   }
   return diffs;
@@ -368,25 +412,33 @@ async function crossCheckSweep(base, axes, mine) {
 // with the user's own key, direct to Anthropic. No proxy. The opt-in header
 // is what makes the browser-direct call allowed.
 // ---------------------------------------------------------------------------
-async function callAnthropic(role, userContent) {
+async function callProvider(role, userContent, substrates) {
+  // WHERE this role runs. Same model id can be served from different endpoints;
+  // holding the id fixed and varying this is the only way to see the difference.
+  const sub = (role.substrate && substrates && substrates[role.substrate]) || null;
+  const shape = sub ? (sub.shape || "anthropic") : "anthropic";
+  const url = shape === "openai"
+    ? ((sub && sub.base_url) || "https://api.openai.com/v1") + "/chat/completions"
+    : ((sub && sub.base_url) || "https://api.anthropic.com") + "/v1/messages";
+
+  const headers = shape === "openai"
+    ? { "content-type": "application/json", "authorization": "Bearer " + API_KEY }
+    : { "content-type": "application/json", "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true" };
+
+  const body = shape === "openai"
+    ? { model: role.model, max_tokens: role.max_tokens || 1024,
+        messages: [...(role.system ? [{ role: "system", content: role.system }] : []),
+                   { role: "user", content: userContent }] }
+    : { model: role.model, max_tokens: role.max_tokens || 1024,
+        system: role.system || undefined,
+        messages: [{ role: "user", content: userContent }] };
+
   const t0 = performance.now();
   let res;
   try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify({
-        model: role.model,
-        max_tokens: role.max_tokens || 1024,
-        system: role.system || undefined,
-        messages: [{ role: "user", content: userContent }]
-      })
-    });
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   } catch (e) {
     return { ok: false, error: "network/CORS error: " + e.message,
              latency_ms: Math.round(performance.now() - t0), input_tokens: 0, output_tokens: 0, text: "" };
@@ -400,11 +452,14 @@ async function callAnthropic(role, userContent) {
     return { ok: false, error: msg, latency_ms, input_tokens: 0, output_tokens: 0, text: "" };
   }
   const data = await res.json();
-  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  const text = shape === "openai"
+    ? (((data.choices || [])[0] || {}).message || {}).content || ""
+    : (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  const u = data.usage || {};
   return {
     ok: true, latency_ms, text,
-    input_tokens: (data.usage && data.usage.input_tokens) || 0,
-    output_tokens: (data.usage && data.usage.output_tokens) || 0
+    input_tokens: u.input_tokens || u.prompt_tokens || 0,
+    output_tokens: u.output_tokens || u.completion_tokens || 0
   };
 }
 
@@ -423,12 +478,13 @@ async function runConfigOnce(cfg, task, budget) {
       ok = false; break;
     }
     const role = cfg.roles[roleName];
-    const r = await callAnthropic(role, context);
+    const r = await callProvider(role, context, cfg.substrates);
     const cost = costOf(role.model, r.input_tokens, r.output_tokens);
     if (cost === null) unpriced = true;                 // surfaced, not silently zeroed
     budget.spent += (cost || 0); total_latency += r.latency_ms; total_cost += (cost || 0);
     steps.push({
-      role: roleName, model: role.model, latency_ms: r.latency_ms,
+      role: roleName, model: role.model, substrate: role.substrate || "default",
+      latency_ms: r.latency_ms,
       input_tokens: r.input_tokens, output_tokens: r.output_tokens,
       cost_usd: round6(cost || 0), ok: r.ok, error: r.error || null,
       output_preview: (r.text || "").slice(0, 280)   // your own content; trim to keep it light
