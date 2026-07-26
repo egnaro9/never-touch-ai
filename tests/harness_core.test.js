@@ -421,3 +421,73 @@ test("a rename leaves the whole config still expandable", () => {
   assert.equal(out.length, 2);
   assert.deepEqual(out.map((c) => c.roles.manager.model), ["m1", "m2"]);
 });
+
+// ---------------------------------------------------------------------------
+// THE ASSISTANT'S SCORE GUARD
+//
+// The banner over the assistant says no model produces a score. For the config
+// path that was enforced. For its PROSE it was one line of system prompt, which
+// is a request and not an enforcement -- so the page could render an invented
+// score directly beneath a promise that it could not. These are the tests that
+// make the claim mean something.
+// ---------------------------------------------------------------------------
+const { scoreClaims, groundedNumbers, ungroundedScores } = core;
+
+test("a score the run never produced is caught", () => {
+  const run = { per_task: [{ score: 95 }, { score: 80 }] };
+  const bad = ungroundedScores("The panel looks like about 8/10 to me.", run);
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].value, 8);
+});
+
+test("repeating a real score is allowed -- 'it can read the scores'", () => {
+  // The whole point of "explain the last run". A guard that blocked this would
+  // break the feature it is meant to protect.
+  const run = { per_task: [{ score: 95 }, { score: 80 }] };
+  assert.deepEqual(ungroundedScores("One drafter scored 95%, the panel 80%.", run), []);
+});
+
+test("either scale counts as the same claim -- 0.95 and 95%", () => {
+  assert.deepEqual(ungroundedScores("It scored 95%.", { s: 0.95 }), []);
+  assert.deepEqual(ungroundedScores("It scored 0.95.", { s: 95 }), []);
+});
+
+test("with no run at all, any score-shaped number is ungrounded", () => {
+  // Nothing has been computed, so there is nothing to repeat. This is the case
+  // the old system-prompt-only version was least able to stop.
+  const bad = ungroundedScores("I'd rate this shape 7/10.", null);
+  assert.equal(bad.length, 1);
+});
+
+test("counts and ratios are not scores and are left alone", () => {
+  // "4 calls per task" and "22x the cost" are the assistant doing its job.
+  // A guard that flagged them would train the user to ignore it.
+  assert.deepEqual(ungroundedScores("That shape is 4 calls per task at 22x the cost.", null), []);
+  assert.deepEqual(ungroundedScores("It has 3 roles and 2 terminals.", null), []);
+});
+
+test("every score-shaped form is recognised", () => {
+  const forms = ["85%", "8/10", "85/100", "8 out of 10", "scored 85", "rated 8", "grades 7"];
+  for (const f of forms) {
+    assert.ok(scoreClaims(f).length >= 1, `missed: ${f}`);
+  }
+});
+
+test("grounded numbers are read out of nested run data", () => {
+  const nums = groundedNumbers({ configs: [{ label: "a", mean: 95 }], per_task: [[{ score: 80 }]] });
+  assert.ok(nums.has(95));
+  assert.ok(nums.has(80));
+});
+
+test("rounding does not create a false accusation", () => {
+  // A reply saying 95% about a stored 94.7 is repeating, not inventing.
+  assert.deepEqual(ungroundedScores("about 95%", { mean: 94.7 }), []);
+});
+
+test("the run summary itself can be the grounding source", () => {
+  // What the assistant was actually handed, verbatim. Grounding against it asks
+  // the honest question: was this number in what I gave you?
+  const summary = "PER-CONFIG RESULT:\n  one drafter  mean 95\n  panel  mean 80\n";
+  assert.deepEqual(ungroundedScores("The solo shape scored 95%, the panel 80%.", summary), []);
+  assert.equal(ungroundedScores("The panel scored 62%.", summary).length, 1);
+});

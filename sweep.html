@@ -344,6 +344,13 @@
     border-left: 2px solid var(--armed); padding-left: .6rem; }
   .asst-rule .v { width: 6px; height: 6px; border-radius: 50%; background: var(--armed); }
   .asst-rule b { color: var(--armed); }
+  /* A number the assistant stated that is not in the run data. Named, quoted and
+     left next to the reply -- hiding the reply would hide the evidence. */
+  .asst-flag { font-family: var(--mono); font-size: .68rem; line-height: 1.5;
+               border-left: 3px solid var(--bad, #e0623f); padding: 7px 0 7px 10px;
+               margin: 8px 0 2px; color: var(--muted); }
+  .asst-flag b { color: var(--bad, #e0623f); }
+  .asst-flag code { color: var(--ink); }
   .asst-log { max-height: 260px; overflow: auto; font-size: .84rem; }
   .asst-log .turn { padding: .45rem 0; border-bottom: 1px dashed var(--line); }
   .asst-log .turn .who { font-family: var(--mono); font-size: .66rem; text-transform: uppercase;
@@ -644,7 +651,7 @@
           <div class="asst-rule">
             <span class="v"></span>
             <b>No model grades anything here.</b>
-            <span>scoring, verdicts and the paired test stay deterministic — this only explains and proposes</span>
+            <span>scoring, verdicts and the paired test stay deterministic — this only explains and proposes, and every score-shaped number it states is checked against the run</span>
           </div>
           <div class="asst-log" id="asstLog"><div class="empty">Ask what a config does, or describe the comparison you want.</div></div>
           <div id="asstProposal"></div>
@@ -2655,6 +2662,30 @@ function asstSay(who, text) {
   log.scrollTop = log.scrollHeight;
 }
 
+// THE SCORE GUARD, at the point of render. The banner above this panel promises
+// no model produces a score here; until now that promise was one line of system
+// prompt for the assistant's prose, which is a request and not an enforcement.
+// ungroundedScores (harness_core.js) checks every score-shaped number in the
+// reply against the numbers the deterministic side actually produced -- the run
+// summary the assistant was handed, or nothing at all when no sweep has run.
+//
+// It flags rather than hides. A reply that invented a number is the evidence
+// that it did; suppressing it would leave the user with a silent gap.
+function flagUngroundedScores(replyText, groundedFrom) {
+  const bad = ungroundedScores(replyText, groundedFrom);
+  if (!bad.length) return;
+  const log = $("asstLog");
+  const d = document.createElement("div");
+  d.className = "asst-flag";
+  const list = bad.map((b) => `<code>${escapeHtml(b.raw)}</code>`).join(", ");
+  d.innerHTML = `<b>not from the run:</b> ${list} — ` +
+    (groundedFrom
+      ? "no such number is in the scored results. The assistant may repeat a score; it may not produce one."
+      : "nothing has been scored yet, so there is no score to repeat.");
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+
 function renderProposal() {
   const host = $("asstProposal");
   if (!asstPending) { host.innerHTML = ""; return; }
@@ -2713,6 +2744,7 @@ async function askAssistant() {
   if (!parsed) { asstSay("assistant", (r.text || "").slice(0, 1200)); return; }
   asstTurns.push({ role: "assistant", content: r.text });
   asstSay("assistant", parsed.reply || "(no reply)");
+  flagUngroundedScores(parsed.reply || "", buildRunSummary());
 
   if (!parsed.config) { asstPending = null; renderProposal(); return; }
 
@@ -2841,7 +2873,11 @@ Reply as JSON: {"reply": "<4-8 sentences, plain text>", "config": null}` };
   $("asstCost").innerHTML = `costs your key · <b>${usd(asstSpent)}</b> spent on the assistant so far`;
   let parsed = null;
   try { parsed = JSON.parse((r.text || "").replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch {}
-  asstSay("assistant", (parsed && parsed.reply) || (r.text || "").slice(0, 1500));
+  const shown = (parsed && parsed.reply) || (r.text || "").slice(0, 1500);
+  asstSay("assistant", shown);
+  // Grounded against the SAME summary it was handed, so the question is
+  // exactly "did you repeat what I gave you, or make one up?"
+  flagUngroundedScores(shown, summary);
 }
 
 $("asstExplain").addEventListener("click", () => { explainLastRun().catch((e) => {

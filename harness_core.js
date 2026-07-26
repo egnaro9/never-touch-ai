@@ -405,11 +405,110 @@ function renameRoleInAxes(axes, from, to) {
 }
 
 
+// ---------------------------------------------------------------------------
+// THE ASSISTANT'S SCORE GUARD.
+//
+// The page claims no model produces a score here. For the CONFIG path that was
+// already true by construction: a proposal has nowhere to put a score and is
+// re-validated through expandSweep/orderOf before it is offered.
+//
+// For the assistant's PROSE it was not true. It rested on one line of system
+// prompt -- "You NEVER grade, score or judge output" -- and a prompt is a
+// request, not an enforcement. The model could answer "the panel is about 8/10"
+// and the page would render it next to a banner promising it had not.
+//
+// The assistant IS allowed to read and repeat a real score; that is the whole
+// point of "explain the last run". So the invariant is not "no numbers". It is:
+//
+//     every score-shaped number in the reply must appear in the run data
+//
+// which is the same discipline as grounding a summary in retrieved context --
+// what it says has to be traceable to something that was actually computed.
+// Anything else is flagged in the UI and named, rather than quietly rendered.
+//
+// Deliberately narrow. Counts and ratios ("4 calls per task", "22x the cost")
+// are not score-shaped and are not touched.
+// ---------------------------------------------------------------------------
+const SCORE_PATTERNS = [
+  // 85%, 85.5 %
+  /(\d{1,3}(?:\.\d+)?)\s*%/g,
+  // 8/10, 85/100
+  /(\d{1,3}(?:\.\d+)?)\s*\/\s*(?:10|100)\b/g,
+  // 8 out of 10
+  /(\d{1,3}(?:\.\d+)?)\s+out of\s+(?:10|100)\b/g,
+  // scored 85, scores 0.85, rated 8
+  /\b(?:scored|scores|rated|rates|grades?)\s+(?:it\s+)?(?:a\s+)?(\d{1,3}(?:\.\d+)?)\b/gi,
+];
+
+// Pull every score-shaped number out of prose. Returns [{raw, value}].
+function scoreClaims(text) {
+  const s = String(text || "");
+  // Keyed by value: the patterns overlap on purpose ("scored 62%" matches both
+  // the percent form and the verb form), and one number the reader sees once
+  // should be one claim, not two. Longest raw wins so the flag quotes the fuller
+  // phrase back.
+  const byValue = new Map();
+  for (const re of SCORE_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      const value = Number(m[1]);
+      if (!Number.isFinite(value)) continue;
+      const raw = m[0].trim();
+      const prev = byValue.get(value);
+      if (!prev || raw.length > prev.raw.length) byValue.set(value, { raw, value });
+    }
+  }
+  return [...byValue.values()];
+}
+
+// Every number the deterministic side actually produced, as a flat list. Scores
+// are accepted in either scale (0.95 and 95 are the same claim to a reader).
+function groundedNumbers(runData) {
+  const nums = new Set();
+  const add = (n) => {
+    if (typeof n !== "number" || !Number.isFinite(n)) return;
+    nums.add(n);
+    if (n > 0 && n <= 1) nums.add(n * 100);
+    if (n > 1 && n <= 100) nums.add(n / 100);
+  };
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (typeof v === "number") return add(v);
+    // A string is accepted so the run SUMMARY -- the exact text the assistant
+    // was handed -- can be the grounding source. Then "is this number real?"
+    // becomes "was it in what I gave you?", which is the honest question.
+    if (typeof v === "string") {
+      const m = v.match(/\d+(?:\.\d+)?/g) || [];
+      return m.forEach((x) => add(Number(x)));
+    }
+    if (Array.isArray(v)) return v.forEach((x) => walk(x, depth + 1));
+    if (typeof v === "object") return Object.values(v).forEach((x) => walk(x, depth + 1));
+  };
+  walk(runData, 0);
+  return nums;
+}
+
+// The check itself. `runData` is whatever the last sweep produced, or null when
+// nothing has run -- in which case there is no score to repeat, so every
+// score-shaped claim is ungrounded by definition.
+function ungroundedScores(replyText, runData, tolerance) {
+  const tol = typeof tolerance === "number" ? tolerance : 0.5;
+  const claims = scoreClaims(replyText);
+  if (!claims.length) return [];
+  const grounded = groundedNumbers(runData);
+  return claims.filter((c) => {
+    for (const g of grounded) if (Math.abs(g - c.value) <= tol) return false;
+    return true;
+  });
+}
+
 return {
   PRICING, PRICING_VERIFIED, PRICING_SOURCE,
   baseModelId, todayISO, priceFor, costOf, round6, usd, short,
   asGraph, orderOf, terminalsOf, shapeLabel, expandSweep,
   choose, signTestP, pairedCompare, pairedVerdict, costVerdict,
   renameRole, renameRoleInAxes,
+  scoreClaims, groundedNumbers, ungroundedScores,
 };
 });
