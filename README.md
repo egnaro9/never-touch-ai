@@ -1,7 +1,12 @@
 # Harness Builder
 
-*The harness-comparison tool on the [AI Crash Test](https://egnaro9.github.io/never-touch-ai/)
-site. Live: [egnaro9.github.io/never-touch-ai/sweep.html](https://egnaro9.github.io/never-touch-ai/sweep.html)*
+*The harness-comparison tool on the [AI Crash Test](https://egnaro9.github.io/harness-builder/)
+site. Live: [egnaro9.github.io/harness-builder/sweep.html](https://egnaro9.github.io/harness-builder/sweep.html)*
+
+> **Beta.** The tool runs and the numbers it reports are real, but it has been through one
+> sweep against one suite. Treat a single run here as a data point, not a verdict — which is
+> also why it reports when a suite cannot separate two configurations rather than ranking them
+> anyway.
 
 A hosted BYOK tool for testing and comparing AI harness configurations: different
 models bound to different roles, with different scaffolding, run against the same

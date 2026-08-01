@@ -8,10 +8,10 @@
 > [`results/sweep_2026-07-25.json`](../results/sweep_2026-07-25.json), which is
 > committed; the test counts come from the commands at the end.
 
-**Run it yourself:** https://egnaro9.github.io/never-touch-ai/sweep.html — draw a
+**Run it yourself:** https://egnaro9.github.io/harness-builder/sweep.html — draw a
 harness, sweep it, and it executes the whole matrix on mock substrates for free,
 with no key at all.
-**Source:** [`egnaro9/never-touch-ai`](https://github.com/egnaro9/never-touch-ai)
+**Source:** [`egnaro9/harness-builder`](https://github.com/egnaro9/harness-builder)
 · the grader engine: [`egnaro9/gradecore`](https://github.com/egnaro9/gradecore)
 
 ---
@@ -163,7 +163,7 @@ why only a live run surfaced it.
 ## Reproduce it
 
 ```bash
-git clone https://github.com/egnaro9/never-touch-ai && cd never-touch-ai
+git clone https://github.com/egnaro9/harness-builder && cd harness-builder
 python3 -m pip install -r requirements.txt
 python3 -m pytest tests -q           # 130 passed, 6 xfailed
 node --test 'tests/*.test.js'        # 43 passed
